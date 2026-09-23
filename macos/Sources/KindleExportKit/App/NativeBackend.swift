@@ -113,9 +113,16 @@ public final class NativeBackend: NSObject, AppBackend, NSWindowDelegate {
 
   // MARK: - library
 
+  /// How long a freshly loaded page gets to redirect a signed-out session.
+  static let redirectSettleNanoseconds: UInt64 = 1_500_000_000
+
   public func fetchLibrary() async throws -> [LibraryBook] {
     park()
     try await session.load(Self.libraryURL)
+    // A signed-out session lands on the library page first and is sent on to
+    // sign-in by a script a moment later, so the address right after loading
+    // proves nothing. Give the redirect time to happen before trusting it.
+    try await Task.sleep(nanoseconds: Self.redirectSettleNanoseconds)
     guard Self.isSignedInUrl(session.currentURL) else {
       throw LibraryService.LibraryError.notSignedIn
     }
@@ -123,9 +130,22 @@ public final class NativeBackend: NSObject, AppBackend, NSWindowDelegate {
     if libraryService == nil { libraryService = try LibraryService() }
     let service = libraryService!
     let webView = session.webView
-    return try await service.fetchLibrary(evaluate: { script in
-      try await Self.callAsync(script, in: webView, timeout: Self.libraryScriptTimeout)
-    })
+    do {
+      return try await service.fetchLibrary(evaluate: { script in
+        try await Self.callAsync(script, in: webView, timeout: Self.libraryScriptTimeout)
+      })
+    } catch let error as LibraryService.LibraryError {
+      throw error
+    } catch {
+      // The request died mid-flight — typically because the page navigated
+      // away under it, which a signed-out session does on its way to sign-in.
+      // Where the page went decides what this was.
+      try await Task.sleep(nanoseconds: Self.redirectSettleNanoseconds)
+      if !Self.isSignedInUrl(session.currentURL) {
+        throw LibraryService.LibraryError.notSignedIn
+      }
+      throw error
+    }
   }
 
   /// Run the body of an async function in the page (LibraryService's

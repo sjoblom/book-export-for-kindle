@@ -215,3 +215,21 @@ final class PipelineStoreTests: XCTestCase {
       LibraryCache.safeCoverUrl(" https://M.Media-Amazon.com "), "https://m.media-amazon.com/")
   }
 }
+
+import JavaScriptCore
+
+final class LibraryScriptSyntaxTests: XCTestCase {
+  /// The library script is JavaScript inside a Swift literal, where one wrong
+  /// escape still compiles but yields a script the page rejects as a syntax
+  /// error. Compile it (as the async-function body WebKit runs it as) here.
+  func testLibraryScriptParses() throws {
+    let context = try XCTUnwrap(JSContext())
+    for token in [nil, "abc\"def"] as [String?] {
+      let body = LibraryService.script(pageSize: 50, token: token)
+      var failure: String?
+      context.exceptionHandler = { _, exception in failure = exception?.toString() }
+      context.evaluateScript("(async function () {\n\(body)\n})")
+      XCTAssertNil(failure, "script does not parse: \(failure ?? "")")
+    }
+  }
+}

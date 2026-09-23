@@ -154,8 +154,20 @@ public actor LibraryService {
         credentials: 'include',
         headers: { accept: 'application/json' }
       });
+      // A signed-out session is redirected to Amazon's sign-in page, so the
+      // reply is HTML rather than an error status. Anything that isn't the
+      // library's JSON is treated as "not signed in", the one fix the app can
+      // offer, rather than surfacing a parse error nobody can act on.
+      if (res.redirected && /\\/ap\\/signin|\\/gp\\/signin/.test(new URL(res.url).pathname)) {
+        return JSON.stringify({ __notSignedIn: true });
+      }
       if (!res.ok) return JSON.stringify({ __error: `${res.status} ${res.statusText}` });
-      return JSON.stringify(await res.json());
+      const text = await res.text();
+      try {
+        return JSON.stringify(JSON.parse(text));
+      } catch (e) {
+        return JSON.stringify({ __notSignedIn: true });
+      }
       """
   }
 
