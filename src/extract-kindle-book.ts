@@ -1,6 +1,6 @@
 import 'dotenv/config'
 
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 
@@ -18,6 +18,7 @@ import type {
   AmazonRenderTocItem,
   BookMetadata,
   CaptureStatus,
+  CaptureStopReason,
   PageNav,
   TocItem
 } from './types'
@@ -29,9 +30,13 @@ import {
 import {
   chevronClickTimeoutMs,
   isOnLastNumberedPage,
+  MAX_CAPTURE_RECOVERIES,
   maxNavigationAttempts,
   type NavigationResult,
   navigationTimeoutMs,
+  resumeScreenDecision,
+  type ResumeState,
+  shouldRecover,
   shouldStopBeforeCapture,
   shouldStopCapture
 } from './capture-termination'
@@ -63,6 +68,16 @@ const renderMethod: RENDER_METHOD = 'blob'
 const deviceScaleFactor = 2
 const VERBOSE_LOGGING = getEnv('KINDLE_EXPORT_VERBOSE') === '1'
 const QUIET_LOGGING = getEnv('KINDLE_EXPORT_QUIET') === '1'
+
+/**
+ * Test hook: pretend the reader stalls once, on the first screen at or past
+ * this page, so stall recovery can be exercised against the real reader —
+ * genuine stalls are rare and can't be provoked on demand.
+ */
+const SIMULATE_STALL_AT_PAGE = Number.parseInt(
+  getEnv('KINDLE_EXPORT_SIMULATE_STALL_AT_PAGE') ?? '',
+  10
+)
 
 function logInfo(...args: any[]) {
   if (!QUIET_LOGGING) {
@@ -1249,10 +1264,112 @@ export async function extractBook(
     result.capture = capture
     await writeResultMetadata()
 
+    // Every screen saved so far, by a hash of its image. Only consulted while
+    // resuming after a recovery, to recognise the screens that come round
+    // again; see `resumeScreenDecision`. A few thousand short strings at most.
+    const capturedScreenHashes = new Set<string>()
+    // Set while a recovery is walking back up to where the capture stalled.
+    let resume: ResumeState | undefined
+
+    /**
+     * Load the reader afresh and put it back on `pageNumber`.
+     *
+     * Everything the capture relies on survives a navigation — the blob hook
+     * is a context init script that runs on every document, the `captureBlob`
+     * binding and the dialog handler belong to the page, and minimizing is a
+     * window state a navigation doesn't touch — so this only has to redo what
+     * the first load did to the document itself.
+     */
+    async function reloadReaderAt(pageNumber: number) {
+      // Object URLs die with the document that made them, so nothing captured
+      // from the old one can ever be `src` again. Waiting for them to age out
+      // would only crowd the new reader's blobs toward the size backstop.
+      capturedBlobs.clear()
+
+      await page.goto(bookReaderUrl, { timeout: 60_000 })
+      await page.waitForSelector(krRendererMainImageSelector, {
+        timeout: 60_000
+      })
+      await dismissPossibleAlert()
+      await ensureFixedHeaderUI()
+      // Font and layout are saved to the account and should survive the
+      // reload, but screens are only recognised as already captured if they
+      // render identically, and a reader that quietly came back in its
+      // default font would turn every one of them into a duplicate. Both
+      // clicks select what is already selected, so re-applying is cheap.
+      await updateSettings()
+      await goToPage(pageNumber)
+    }
+
+    /**
+     * Answer a stop the capture loop arrived at: reload the reader and carry on
+     * if it's a stall worth recovering from, otherwise record it as the end of
+     * the capture. Returns whether to carry on.
+     *
+     * Every attempt is written to the metadata before it's made, so a run that
+     * dies mid-recovery, or gives up after one, still says what happened.
+     */
+    async function recoverOrStop(stop: {
+      complete: boolean
+      reason: CaptureStopReason
+    }): Promise<boolean> {
+      for (;;) {
+        const decision = shouldRecover({
+          reason: stop.reason,
+          page: capture.lastPage,
+          recoveries: capture.recoveries ?? []
+        })
+
+        if (decision.type === 'give-up') {
+          if (decision.why !== 'not-a-stall') {
+            warnInfo(
+              decision.why === 'recovery-limit'
+                ? `not reloading the reader again: already recovered ${MAX_CAPTURE_RECOVERIES} times`
+                : `not reloading the reader again: it has stalled at page ${capture.lastPage} after reloading`
+            )
+          }
+
+          capture.complete = stop.complete
+          capture.reason = stop.reason
+          return false
+        }
+
+        const recoveries = (capture.recoveries ??= [])
+        recoveries.push({
+          reason: stop.reason,
+          page: capture.lastPage,
+          screens: result.pages.length
+        })
+        await writeResultMetadata()
+
+        // Before anything was captured there is no "last page" to go back to,
+        // only the start of the book.
+        const resumePage =
+          capture.lastPage > 0 ? capture.lastPage : result.nav.startContentPage
+        warnInfo(
+          `the reader stopped responding (${stop.reason}) after page ` +
+            `${capture.lastPage}; reloading it and resuming from page ` +
+            `${resumePage} (recovery ${recoveries.length} of ` +
+            `${MAX_CAPTURE_RECOVERIES})...`
+        )
+
+        try {
+          await reloadReaderAt(resumePage)
+          resume = { page: resumePage, skipped: 0 }
+          return true
+        } catch (err: any) {
+          // Counted all the same, so a reader that can't be reloaded at all
+          // runs out of attempts instead of looping.
+          warnInfo(`reloading the reader failed: ${err?.message ?? err}`)
+        }
+      }
+    }
+
     // Navigate to the first content page of the book
     await goToPage(result.nav.startContentPage)
 
     let done = false
+    let simulatedStallDone = false
     warnInfo(
       `\nreading ${result.nav.totalNumContentPages} content pages out of ${result.nav.totalNumPages} total pages...\n`
     )
@@ -1274,11 +1391,10 @@ export async function extractBook(
 
       if (stopBeforeCapture) {
         if (stopBeforeCapture.reason === 'no-page-nav') {
-          console.warn('lost track of the page position; stopping', { index })
+          console.warn('lost track of the page position', { index })
         }
 
-        capture.complete = stopBeforeCapture.complete
-        capture.reason = stopBeforeCapture.reason
+        if (await recoverOrStop(stopBeforeCapture)) continue
         break
       }
 
@@ -1335,33 +1451,92 @@ export async function extractBook(
         `no buffer found for src: ${src} (index ${index}; page ${currentNavPage})`
       )
 
-      // Recorded relative to the book directory rather than as the path this
-      // process happens to write to: the tree can then be moved, and a later
-      // stage run from a different working directory still finds the image.
-      const screenshot = path.join(
-        PAGE_IMAGES_DIR,
-        `${index}`.padStart(pageNumberPaddingAmount, '0') +
-          '-' +
-          `${currentNavPage}`.padStart(pageNumberPaddingAmount, '0') +
-          '.png'
-      )
+      const screenHash = createHash('sha256')
+        .update(renderedPageImageBuffer)
+        .digest('hex')
 
-      await fs.writeFile(path.join(outDir, screenshot), renderedPageImageBuffer)
-      const pageChunk = {
-        index,
-        page: currentNavPage,
-        screenshot
+      let skipScreen = false
+      if (resume) {
+        const decision = resumeScreenDecision({
+          resume,
+          alreadyCaptured: capturedScreenHashes.has(screenHash),
+          currentPage: currentNavPage,
+          capturedAny: result.pages.length > 0
+        })
+
+        if (decision.type === 'lost-place') {
+          warnInfo(
+            `after reloading, the reader showed page ${currentNavPage} ` +
+              `instead of page ${resume.page}; screens in between may be missing`
+          )
+          resume = undefined
+          // The same stall again, as far as the budget is concerned: this
+          // recovery didn't put the capture back where it was.
+          const stalled = capture.recoveries?.at(-1)?.reason
+          assert(stalled, 'expected a recorded recovery while resuming')
+          if (await recoverOrStop({ complete: false, reason: stalled })) {
+            continue
+          }
+          break
+        }
+
+        if (decision.type === 'skip') {
+          resume.skipped++
+          skipScreen = true
+          logVerbose(
+            `skipping a screen of page ${currentNavPage} captured before the reload`
+          )
+        } else {
+          if (decision.possibleDuplicates) {
+            warnInfo(
+              `after reloading, page ${currentNavPage} rendered differently ` +
+                'from before, so some of its screens may be captured twice'
+            )
+          } else {
+            warnInfo(
+              `resumed capturing after the reload at page ${currentNavPage} ` +
+                `(${resume.skipped} screens already captured were skipped)`
+            )
+          }
+          resume = undefined
+        }
       }
-      result.pages.push(pageChunk)
-      capture.lastPage = currentNavPage
-      if (VERBOSE_LOGGING) {
-        console.warn(pageChunk)
-      } else if (!QUIET_LOGGING && (index === 0 || (index + 1) % 100 === 0)) {
-        console.warn(
-          `captured ${index + 1} page images; current page/location ${currentNavPage}`
+
+      // Screens that come round again after a recovery are passed over
+      // without writing anything, but still turned past below.
+      if (!skipScreen) {
+        // Recorded relative to the book directory rather than as the path this
+        // process happens to write to: the tree can then be moved, and a later
+        // stage run from a different working directory still finds the image.
+        const screenshot = path.join(
+          PAGE_IMAGES_DIR,
+          `${index}`.padStart(pageNumberPaddingAmount, '0') +
+            '-' +
+            `${currentNavPage}`.padStart(pageNumberPaddingAmount, '0') +
+            '.png'
         )
+
+        await fs.writeFile(
+          path.join(outDir, screenshot),
+          renderedPageImageBuffer
+        )
+        const pageChunk = {
+          index,
+          page: currentNavPage,
+          screenshot
+        }
+        result.pages.push(pageChunk)
+        capture.lastPage = currentNavPage
+        if (VERBOSE_LOGGING) {
+          console.warn(pageChunk)
+        } else if (!QUIET_LOGGING && (index === 0 || (index + 1) % 100 === 0)) {
+          console.warn(
+            `captured ${index + 1} page images; current page/location ${currentNavPage}`
+          )
+        }
+        await writeResultMetadata()
+        capturedScreenHashes.add(screenHash)
       }
-      await writeResultMetadata()
 
       // The footer reaching the last page means "this is probably the last
       // screen", not "stop now": Kindle's page numbers are coarse, so the last
@@ -1430,13 +1605,20 @@ export async function extractBook(
           ]
         )
 
-        observations.push(
-          navigatedToNextPage
-            ? 'navigated'
-            : (await hasUsableNextPageChevron())
-              ? 'stalled'
-              : 'no-next-page'
-        )
+        if (currentNavPage >= SIMULATE_STALL_AT_PAGE && !simulatedStallDone) {
+          warnInfo(`simulating a reader stall at page ${currentNavPage}`)
+          observations.push(
+            ...Array.from({ length: maxAttempts }, () => 'stalled' as const)
+          )
+          simulatedStallDone = true
+        } else
+          observations.push(
+            navigatedToNextPage
+              ? 'navigated'
+              : (await hasUsableNextPageChevron())
+                ? 'stalled'
+                : 'no-next-page'
+          )
         const action = shouldStopCapture({
           observations,
           onLastNumberedPage,
@@ -1449,12 +1631,13 @@ export async function extractBook(
         if (action.reason === 'end-of-book') {
           warnInfo('reached the end of the book', pageNav)
         } else {
-          console.warn('unable to navigate to next page; breaking...', pageNav)
+          console.warn('unable to navigate to next page', pageNav)
         }
 
-        capture.complete = action.complete
-        capture.reason = action.reason
-        done = true
+        // A recovery leaves the reader on a screen that hasn't been looked at
+        // yet, so going round the outer loop again captures (or recognises)
+        // it like any other.
+        if (!(await recoverOrStop(action))) done = true
         break
       }
     } while (!done)

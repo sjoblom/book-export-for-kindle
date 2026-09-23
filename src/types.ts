@@ -37,6 +37,24 @@ export interface CaptureStatus {
   lastPage: number
   /** Content pages the book claims to have. */
   totalContentPages: number
+  /**
+   * Every time the reader stopped responding and the capture reloaded it to
+   * carry on, oldest first. A complete capture with recoveries is still
+   * complete; the list is there so a surprising result — a duplicated screen,
+   * a slow run — can be traced back to what happened. Absent when the run
+   * never needed one, and on captures made before recovery existed.
+   */
+  recoveries?: CaptureRecovery[]
+}
+
+/** One in-run recovery from a reader that stopped responding. */
+export interface CaptureRecovery {
+  /** The stall that would otherwise have ended the capture. */
+  reason: CaptureStopReason
+  /** The page the capture had reached when it stalled. */
+  page: number
+  /** Screens captured before the stall, i.e. where the capture resumed. */
+  screens: number
 }
 
 export type CaptureStopReason =

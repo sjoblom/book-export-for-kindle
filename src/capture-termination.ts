@@ -236,3 +236,195 @@ export function shouldStopCapture({
     ? { type: 'stop', complete: false, reason: 'end-unconfirmed' }
     : { type: 'stop', complete: false, reason: 'navigation-failed' }
 }
+
+/*
+ * Recovering from a reader that stopped responding.
+ *
+ * The Kindle web reader occasionally stops turning pages on an ordinary screen
+ * — the same book captures straight past that screen on another run — and
+ * stopping there costs the person a full re-capture from page 1. A fresh load
+ * of the reader almost always gets it moving again, so a stall is answered by
+ * reloading, going back to the page the capture had reached and carrying on.
+ *
+ * Two things must never happen along the way: a genuine ending mistaken for a
+ * stall (the capture would reload and walk forward into back matter, or loop
+ * at the last page forever), and a recovery that quietly drops screens. The
+ * functions below decide both, and are kept apart from the browser driving so
+ * they can be tested.
+ */
+
+/** Recoveries allowed in one capture, wherever they happen. */
+export const MAX_CAPTURE_RECOVERIES = 3
+
+/**
+ * Recoveries allowed at one page before accepting that the reader will not get
+ * past it.
+ *
+ * Two, because the first retry can land on a reader that is itself still
+ * warming up; a second failure at the same spot after a fresh load is no
+ * longer bad luck, and further reloads would only spend the recovery budget
+ * the rest of the book might need.
+ */
+export const MAX_RECOVERIES_AT_ONE_PAGE = 2
+
+/**
+ * The same, for a stall on the last numbered page.
+ *
+ * One, because an `end-unconfirmed` stop is ambiguous in a way a mid-book
+ * stall is not: some books end with the next-page control still enabled, and
+ * no amount of reloading changes that. One fresh load is enough to tell a
+ * stuck reader (it turns, or it drops the chevron and confirms the end) from a
+ * book that simply ends like that; a second would cost every such book another
+ * reload for nothing.
+ */
+export const MAX_RECOVERIES_AT_UNCONFIRMED_END = 1
+
+/**
+ * Stop reasons that mean "the reader stopped cooperating", as opposed to "the
+ * book ended". Only these are worth a reload.
+ *
+ * - `navigation-failed`: a usable next-page control that won't turn, mid-book.
+ * - `end-unconfirmed`: the same on the last numbered page (see above).
+ * - `no-page-nav`: the footer became unreadable, which is a rendering fault,
+ *   not a position — a reload redraws it.
+ *
+ * `end-of-book` and `past-last-content-page` are the book telling us it has
+ * finished, and `interrupted` is not a decision the capture loop ever makes.
+ */
+const STALL_REASONS: ReadonlySet<CaptureStopReason> =
+  new Set<CaptureStopReason>([
+    'navigation-failed',
+    'end-unconfirmed',
+    'no-page-nav'
+  ])
+
+/** Whether a stop reason is a stall that a recovery might get past. */
+export function isStall(reason: CaptureStopReason): boolean {
+  return STALL_REASONS.has(reason)
+}
+
+export interface RecoveryInput {
+  /** Why the capture would stop now. */
+  reason: CaptureStopReason
+  /** The last page captured, which is where a recovery would resume. */
+  page: number
+  /** Recoveries already made in this capture, oldest first. */
+  recoveries: readonly { page: number }[]
+}
+
+export type RecoveryDecision =
+  | { type: 'recover' }
+  | {
+      type: 'give-up'
+      /**
+       * `not-a-stall`: the book ended, nothing to recover from.
+       * `recovery-limit`: the capture has used all its recoveries.
+       * `stuck-here`: recoveries at this page have already failed.
+       */
+      why: 'not-a-stall' | 'recovery-limit' | 'stuck-here'
+    }
+
+/**
+ * Whether to reload the reader and carry on instead of stopping.
+ *
+ * "At this page" is judged by the last *captured* page, which is exactly where
+ * a recovery resumes: if the capture stalls again without having captured
+ * anything on a later page, the previous recovery didn't get it past the
+ * problem. A recovery that fails outright (the reload itself errors) is
+ * recorded all the same, so it counts here too and a reader that can't be
+ * reloaded at all runs out of attempts rather than looping.
+ */
+export function shouldRecover({
+  reason,
+  page,
+  recoveries
+}: RecoveryInput): RecoveryDecision {
+  if (!isStall(reason)) return { type: 'give-up', why: 'not-a-stall' }
+
+  if (recoveries.length >= MAX_CAPTURE_RECOVERIES) {
+    return { type: 'give-up', why: 'recovery-limit' }
+  }
+
+  const atThisPage = recoveries.filter((r) => r.page === page).length
+  const allowedHere =
+    reason === 'end-unconfirmed'
+      ? MAX_RECOVERIES_AT_UNCONFIRMED_END
+      : MAX_RECOVERIES_AT_ONE_PAGE
+  if (atThisPage >= allowedHere) {
+    return { type: 'give-up', why: 'stuck-here' }
+  }
+
+  return { type: 'recover' }
+}
+
+/** Where a capture is resuming after a recovery. */
+export interface ResumeState {
+  /** The page the reader was sent back to: the last page captured. */
+  page: number
+  /** Screens passed over so far because they had already been captured. */
+  skipped: number
+}
+
+export interface ResumeScreenInput {
+  resume: ResumeState
+  /** Whether this screen's image is identical to one already captured. */
+  alreadyCaptured: boolean
+  /** The page the footer reports for this screen. */
+  currentPage: number
+  /** Whether the capture had captured anything before it stalled. */
+  capturedAny: boolean
+}
+
+export type ResumeScreenDecision =
+  /** Already captured: turn past it without saving it again. */
+  | { type: 'skip' }
+  /**
+   * The first screen not captured before: capture it and every one after it
+   * as normal. `possibleDuplicates` means the screens already captured for
+   * this page were never recognised, so some of them may be captured twice.
+   */
+  | { type: 'capture'; possibleDuplicates: boolean }
+  /**
+   * The reader came back somewhere past the page it was sent to, without
+   * showing a single screen we recognise. Screens between the two may be
+   * missing, so this is treated as a failed recovery rather than carried on.
+   */
+  | { type: 'lost-place' }
+
+/**
+ * What to do with a screen seen while resuming after a recovery.
+ *
+ * A Kindle page number spans several screens, and going back to the last page
+ * captured lands on its *first* screen, so the screens up to the one that
+ * stalled come round again. They're recognised by their image: the same
+ * content in the same reader settings renders to the same pixels, and a
+ * screen identical to one already saved carries nothing new.
+ *
+ * When nothing matches — the reload rendered the page differently — the only
+ * choices are to skip screens we can't recognise or to capture them again.
+ * Capturing wins: a repeated screen shows up as repeated text that a reader
+ * can see and skip, while a skipped one is a silent hole in the book that
+ * nothing downstream can detect. The one case that can't be resolved by
+ * capturing more is landing *past* where we were; that gives up rather than
+ * guessing.
+ */
+export function resumeScreenDecision({
+  resume,
+  alreadyCaptured,
+  currentPage,
+  capturedAny
+}: ResumeScreenInput): ResumeScreenDecision {
+  if (alreadyCaptured) return { type: 'skip' }
+
+  // Nothing had been captured, so there is nothing to duplicate or miss:
+  // whatever the reader shows is where the capture starts.
+  if (!capturedAny) return { type: 'capture', possibleDuplicates: false }
+
+  // Having recognised at least one screen, we know the reader is rendering as
+  // it did before and this is simply the next screen along.
+  if (resume.skipped > 0) return { type: 'capture', possibleDuplicates: false }
+
+  if (currentPage > resume.page) return { type: 'lost-place' }
+
+  return { type: 'capture', possibleDuplicates: true }
+}
