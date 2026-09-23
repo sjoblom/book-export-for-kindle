@@ -5,7 +5,6 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 
 import type { SetRequired } from 'type-fest'
-import { input } from '@inquirer/prompts'
 import delay from 'delay'
 import pRace from 'p-race'
 // import { chromium } from 'playwright'
@@ -338,17 +337,8 @@ export async function showBrowserWindow(page: Page): Promise<void> {
 
 export interface ExtractBookOptions {
   asin: string
-  /**
-   * Amazon credentials, used only if the stored session has expired. Leave
-   * them unset to sign in by hand in the browser window instead — no need to
-   * keep an Amazon password in a plaintext file.
-   */
-  amazonEmail?: string
-  amazonPassword?: string
   /** Root directory holding one folder per ASIN. Defaults to `out`. */
   outDir?: string
-  /** 2FA code, when the caller has one and no TTY is available to prompt on. */
-  otp?: string
   /**
    * Minimize the automation window while capturing. It is brought back
    * automatically if Amazon asks for a sign-in.
@@ -406,7 +396,7 @@ export async function extractBook(
   context: BrowserContext,
   opts: ExtractBookOptions
 ): Promise<void> {
-  const { asin, amazonEmail, amazonPassword, otp, hideWindow } = opts
+  const { asin, hideWindow } = opts
   const asinL = asin.toLowerCase()
 
   const outDir = path.join(opts.outDir ?? 'out', asin)
@@ -645,8 +635,7 @@ export async function extractBook(
     async function signIn() {
       // The landing page's "Sign in with your account" button leads to the
       // sign-in form. Pressing it for the person saves them working out that
-      // it's the step they're missing, and puts the scripted path on the form
-      // it expects.
+      // it's the step they're missing.
       if (isLandingUrl(page.url())) {
         await page
           .locator('#top-sign-in-btn')
@@ -657,61 +646,27 @@ export async function extractBook(
           .catch(() => {})
       }
 
-      if (!amazonEmail || !amazonPassword) {
-        // No stored credentials, so let the person sign in themselves in the
-        // browser window that's already open. This is the default path: it
-        // keeps Amazon passwords out of config files entirely, and handles
-        // whatever challenge Amazon throws up without us having to script it.
-        logInfo(
-          'Amazon needs you to sign in. Complete sign-in in the browser window...'
-        )
+      // Sign-in is always done by the person, in the browser window that's
+      // already open: the app never handles an Amazon password, and whatever
+      // challenge Amazon throws up is answered where Amazon asks it.
+      logInfo(
+        'Amazon needs you to sign in. Complete sign-in in the browser window...'
+      )
 
-        // A hidden window has to come back for this — the user can't sign in
-        // to a window they can't see.
-        await showBrowserWindow(page)
+      // A hidden window has to come back for this — the user can't sign in
+      // to a window they can't see.
+      await showBrowserWindow(page)
 
-        // Back on the reader, not merely off the sign-in form: Amazon's
-        // challenge pages (`/ap/cvf`, `/ap/mfa`) come after it and are still
-        // part of signing in.
-        await page.waitForURL((url) => isSignedInUrl(url.href), {
-          timeout: MANUAL_SIGN_IN_TIMEOUT_MS
-        })
+      // Back on the reader, not merely off the sign-in form: Amazon's
+      // challenge pages (`/ap/cvf`, `/ap/mfa`) come after it and are still
+      // part of signing in.
+      await page.waitForURL((url) => isSignedInUrl(url.href), {
+        timeout: MANUAL_SIGN_IN_TIMEOUT_MS
+      })
 
-        logInfo('Signed in.')
-        if (hideWindow) {
-          await hideBrowserWindow(page)
-        }
-        return
-      }
-
-      await page.locator('input[type="email"]').fill(amazonEmail)
-      await page.locator('input[type="submit"]').click()
-
-      await page.locator('input[type="password"]').fill(amazonPassword)
-      // await page.locator('input[type="checkbox"]').click()
-      await page.locator('input[type="submit"]').click()
-
-      // Only relevant to the scripted path — when signing in by hand, 2FA is
-      // dealt with in the browser rather than at the terminal.
-      if (!/\/kindle-library/g.test(new URL(page.url()).pathname)) {
-        const envOtpCode = otp?.trim() || getEnv('AMAZON_OTP')?.trim()
-        const code =
-          envOtpCode ||
-          (process.stdin.isTTY
-            ? await input({
-                message: '2-factor auth code?'
-              })
-            : '')
-
-        // Only enter 2-factor auth code if needed
-        if (code) {
-          await page.locator('input[type="tel"]').fill(code)
-          await page
-            .locator(
-              'input[type="submit"][aria-labelledby="cvf-submit-otp-button-announce"]'
-            )
-            .click()
-        }
+      logInfo('Signed in.')
+      if (hideWindow) {
+        await hideBrowserWindow(page)
       }
     }
 

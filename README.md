@@ -4,6 +4,10 @@ Export Kindle books you own as clean markdown. On a Mac it runs entirely on
 your own machine — no API key, no network calls beyond Amazon, nothing to pay
 for.
 
+It is for books you have bought, for your own reading. It works against
+Amazon's terms of service, and exports must not be shared — read
+[Scope](#scope) before using it.
+
 - **On a Mac: `Kindle Export.app`.** A native app of a few megabytes — click
   a book in your library and it becomes a Markdown file (or a PDF). It
   carries its own command-line tool, `kindle-export`, for the terminal.
@@ -233,9 +237,9 @@ yourself, and stores the session under `~/.kindle-export/profile`:
 kindle-export login
 ```
 
-**You do not need to put your Amazon password anywhere.** If the stored session
-expires, a browser window opens and you sign in by hand. `AMAZON_EMAIL` and
-`AMAZON_PASSWORD` exist only if you want sign-in scripted for unattended runs.
+**You never give this tool your Amazon password.** If the stored session
+expires, a browser window opens on Amazon's own sign-in page and you sign in by
+hand there.
 
 #### What leaves your machine
 
@@ -274,7 +278,7 @@ kindle-export export <ASIN...>       render markdown from transcribed text only
 
 Useful options: `--format md,pdf`, `--json` and `--limit` for `list`,
 `--port` for `serve`, plus `--out-dir`, `--profile-dir`, `--model`,
-`--concurrency`, `--otp` and `--force`. Run `kindle-export --help` for the
+`--concurrency` and `--force`. Run `kindle-export --help` for the
 full list.
 
 `--model <name>` (or `OCR_MODEL` in the environment or `.env`) switches
@@ -284,8 +288,7 @@ starts paying for what it can read for free; `kindle-export serve --model ...`
 applies it to the web app too. Leave it unset on macOS.
 
 `list` reads the same internal JSON endpoint the Kindle library page uses, so
-it sees everything in your account and pages through it. Piping `--json`
-elsewhere is the easy way to script a bulk export.
+it sees everything in your account and pages through it.
 
 The ASIN is also in the Amazon URL for a book — `.../dp/B01H4G2J1U`.
 

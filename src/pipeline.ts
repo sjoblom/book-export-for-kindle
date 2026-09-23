@@ -39,7 +39,6 @@ export interface Options {
   profileDir: string
   model?: string
   concurrency?: number
-  otp?: string
   json: boolean
   limit?: number
   port?: number
@@ -244,15 +243,12 @@ async function capture(
   }, CAPTURE_POLL_MS)
 
   try {
-    // Credentials are optional: the stored session usually covers it, and if
-    // it doesn't, you sign in by hand in the browser window that opens.
+    // The stored session usually covers it; if it doesn't, you sign in by
+    // hand in the browser window that opens.
     await runExtraction({
       asin,
-      amazonEmail: getEnv('AMAZON_EMAIL'),
-      amazonPassword: getEnv('AMAZON_PASSWORD'),
       outDir: options.outDir,
       profileDir: options.profileDir,
-      otp: options.otp,
       hideWindow: options.hideBrowser
     })
   } finally {

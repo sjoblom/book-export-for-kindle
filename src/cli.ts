@@ -58,7 +58,6 @@ Options
                          (needs an API key; also OCR_MODEL in the environment)
   --concurrency <n>      pages transcribed in parallel (default: 16)
   --port <n>             with 'serve', the port to listen on (default: 8484)
-  --otp <code>           2FA code, when there's no terminal to prompt on
   --force                redo every stage, ignoring existing output
   --force-capture        redo page capture
   --force-ocr            redo transcription
@@ -79,9 +78,7 @@ pages, so 'setup' asks for a key there.
 Run 'kindle-export login' to sign in to Amazon; the session stays on this
 machine. 'kindle-export setup' stores the output folder (and the key, where
 one is needed) in ~/.kindle-export/config.json. Settings can also come from
-flags or a .env file, which take precedence. AMAZON_EMAIL and AMAZON_PASSWORD
-are optional — set them only if you want sign-in scripted rather than doing it
-yourself.
+flags or a .env file, which take precedence.
 
 Page images are deleted once a book is fully transcribed, since re-capturing
 costs time rather than data. Pass --keep-pages to hold on to them.
@@ -121,7 +118,6 @@ export function parseArgs(argv: string[]): Options | undefined {
   let model: string | undefined
   let concurrency: number | undefined
   let keepPages = false
-  let otp: string | undefined
   let json = false
   let limit: number | undefined
   let port: number | undefined
@@ -160,9 +156,6 @@ export function parseArgs(argv: string[]): Options | undefined {
         // Checked here because p-map only rejects it once transcription
         // starts, which is after a capture that can take an hour.
         concurrency = parsePositiveInteger(arg, next())
-        break
-      case '--otp':
-        otp = next()
         break
       case '--json':
         json = true
@@ -236,7 +229,6 @@ export function parseArgs(argv: string[]): Options | undefined {
     profileDir: profileDir!,
     model,
     concurrency,
-    otp,
     json,
     limit,
     port,

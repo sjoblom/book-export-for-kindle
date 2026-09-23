@@ -83,7 +83,6 @@ public enum CommandLineOptions {
   static let nodeOnlyOptions: [String: String] = [
     "--model": "pages are read on this Mac with Apple Vision",
     "--profile-dir": "the Amazon session is the Kindle Export app's",
-    "--otp": "sign-in happens in a window, which asks for codes itself",
     "--port": "there is no web server; open Kindle Export.app instead",
   ]
 

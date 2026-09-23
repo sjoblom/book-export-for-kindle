@@ -134,7 +134,7 @@ final class CommandLineOptionsTests: XCTestCase {
     }
     XCTAssertTrue(help.contains("~/Documents/Kindle Export"))
     // Nothing the native tool doesn't have.
-    for gone in ["--model", "--profile-dir", "--otp", "--port", "serve", "setup"] {
+    for gone in ["--model", "--profile-dir", "--port", "serve", "setup"] {
       XCTAssertFalse(help.contains(gone), gone)
     }
   }
