@@ -1,5 +1,5 @@
 import type { BookMetadata, CaptureStopReason, ContentStore } from './types'
-import { selectReusableChunks } from './content-store'
+import { selectReusableChunks } from './reusable-chunks'
 
 /**
  * Whether what is on disk for a book is the whole book.

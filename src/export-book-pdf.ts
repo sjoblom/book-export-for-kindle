@@ -7,11 +7,8 @@ import path from 'node:path'
 import PDFDocument from 'pdfkit'
 
 import type { BookMetadata, ContentChunk } from './types'
-import { readContentStore, selectReusableChunks } from './content-store'
-import { withCurrentText } from './page-text'
-import { formatContentChunks } from './postprocess-text'
-import { resolveBookSections } from './toc-sections'
-import { assert, normalizeAuthors } from './utils'
+import { pdfDocument } from './book-pdf'
+import { readContentStore } from './content-store'
 
 export interface ExportBookPdfOptions {
   asin: string
@@ -44,31 +41,10 @@ export async function exportBookPdf({
   const metadata = JSON.parse(
     await fsp.readFile(path.join(outDir, 'metadata.json'), 'utf8')
   ) as BookMetadata
-  // Export only what the pipeline's checks would accept: text from this
-  // capture's pages, one chunk per page, each with actual text. Rendering
-  // `content.json` as-is would print a stale capture or duplicate pages that
-  // every completeness check had already discounted.
-  //
-  // Pages whose raw OCR lines were kept are then re-derived from them, so the
-  // export reflects today's paragraph rules rather than whichever ones were
-  // current when the book was read.
-  const content = withCurrentText(
-    selectReusableChunks(
-      provided
-        ? { captureId: metadata.captureId, chunks: provided }
-        : await readContentStore(outDir),
-      metadata
-    ),
-    metadata
+  const { title, authors, sections } = pdfDocument(
+    metadata,
+    provided ?? (await readContentStore(outDir))
   )
-  assert(content.length, 'no book content found')
-  assert(metadata.meta, 'invalid book metadata: missing meta')
-  assert(metadata.toc?.length, 'invalid book metadata: missing toc')
-
-  const title = metadata.meta.title
-  // Normalized here too: books captured before authors were normalized at
-  // capture time still hold Amazon's raw `Last, First:` string.
-  const authors = normalizeAuthors(metadata.meta.authorList ?? [])
 
   const doc = new PDFDocument({
     autoFirstPage: true,
@@ -107,39 +83,28 @@ export async function exportBookPdf({
 
   let needsNewPage = false
 
-  for (const { tocItem, chunks, nextLabel } of resolveBookSections(
-    metadata.toc,
-    content
-  )) {
+  for (const section of sections) {
     if (needsNewPage) {
       doc.addPage()
     }
 
-    // Aggregate all of the chunks in this chapter into a single string.
-    // Headings stay plain paragraphs here since pdfkit renders raw text.
-    const text = formatContentChunks(chunks, {
-      detectHeadings: false,
-      sectionLabel: tocItem.label,
-      nextSectionLabel: nextLabel
-    })
-
-    ;(doc as any).outline.addItem(tocItem.label)
+    ;(doc as any).outline.addItem(section.label)
     // Deeper sections get smaller titles so the outline reads as a hierarchy,
     // but never shrink to body size, where a title would pass for a paragraph.
     doc.fontSize(
       SECTION_TITLE_FONT_SIZES[
         Math.min(
-          Math.max(tocItem.depth, 0),
+          Math.max(section.depth, 0),
           SECTION_TITLE_FONT_SIZES.length - 1
         )
       ]!
     )
-    doc.text(tocItem.label, { align: 'center', lineGap: 16 })
+    doc.text(section.label, { align: 'center', lineGap: 16 })
 
     doc.fontSize(fontSize)
     doc.moveDown(1)
 
-    doc.text(text, {
+    doc.text(section.text, {
       indent: 20,
       lineGap: 4,
       paragraphGap: 8

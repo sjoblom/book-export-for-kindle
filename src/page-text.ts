@@ -1,6 +1,6 @@
-import type { BookMetadata, ContentChunk, TocItem } from './types'
+import type { BookMetadata, ContentChunk, OcrLine, TocItem } from './types'
 import { reconstructParagraphs } from './ocr-layout'
-import { escapeRegExp } from './utils'
+import { escapeRegExp } from './pure-utils'
 
 export interface ShapePageTextOptions {
   /**
@@ -103,4 +103,28 @@ export function withCurrentText(
     })
     return text === chunk.text ? chunk : { ...chunk, text }
   })
+}
+
+/**
+ * A page's stored text from the lines an OCR engine read off it — the whole
+ * derivation the transcriber applies, for a caller that runs the engine itself
+ * (the native app, with Vision).
+ */
+export function pageTextFromLines(
+  lines: OcrLine[],
+  tocLabelToStrip?: string
+): string {
+  return shapePageText(reconstructParagraphs(lines), { tocLabelToStrip })
+}
+
+/**
+ * `createTocLabelResolver` applied to every chunk at once, `null` where a page
+ * opens no TOC entry — for callers that can only exchange plain data.
+ */
+export function tocLabelsForChunks(
+  metadata: Pick<BookMetadata, 'pages' | 'toc'>,
+  chunks: Pick<ContentChunk, 'index' | 'page'>[]
+): Array<string | null> {
+  const tocLabelFor = createTocLabelResolver(metadata)
+  return chunks.map((chunk) => tocLabelFor(chunk) ?? null)
 }

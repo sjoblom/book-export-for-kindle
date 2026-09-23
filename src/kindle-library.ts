@@ -1,5 +1,12 @@
 import type { BrowserContext } from './extract-kindle-book'
-import { normalizeAuthors } from './utils'
+import { type LibraryBook, parseLibraryPage } from './library-page'
+
+export {
+  type LibraryBook,
+  type LibraryPage,
+  parseLibraryPage,
+  safeCoverUrl
+} from './library-page'
 
 /**
  * Reading the signed-in account's Kindle library.
@@ -16,128 +23,6 @@ const DEFAULT_PAGE_SIZE = 50
 
 /** Guard against an unbounded loop if the endpoint keeps returning a token. */
 const MAX_PAGES = 40
-
-export interface LibraryBook {
-  asin: string
-  title: string
-  authors: string[]
-  /** `EBOOK`, `KINDLE_EDITION_WITH_AUDIO`, … — samples and audiobooks differ. */
-  resourceType?: string
-  /** 0-100, when Amazon reports reading progress. */
-  percentageRead?: number
-  /**
-   * The cover thumbnail Amazon shows in its own library, when it sent one.
-   * Always an https URL on Amazon's image hosts; see `safeCoverUrl`.
-   */
-  coverUrl?: string
-}
-
-export interface LibraryPage {
-  books: LibraryBook[]
-  paginationToken?: string
-}
-
-function asString(value: unknown): string | undefined {
-  return typeof value === 'string' && value.trim() ? value.trim() : undefined
-}
-
-/**
- * Hosts Amazon serves product images from. The web app puts this URL straight
- * into an `<img>`, so anything else — another site, plain http, a `javascript:`
- * or `data:` URL — is dropped rather than rendered.
- */
-const COVER_HOSTS = [
-  'media-amazon.com',
-  'images-amazon.com',
-  'ssl-images-amazon.com'
-]
-
-/**
- * The cover URL if it is an https image on one of Amazon's image hosts,
- * otherwise `undefined`.
- *
- * Exported because the web app's library cache is read back from disk, where
- * a hand-edited or stale file deserves the same scrutiny as the live payload.
- */
-export function safeCoverUrl(value: unknown): string | undefined {
-  const raw = asString(value)
-  if (!raw) return
-
-  let url: URL
-  try {
-    url = new URL(raw)
-  } catch {
-    return
-  }
-
-  if (url.protocol !== 'https:' || url.username || url.password) return
-  const host = url.hostname.toLowerCase()
-  const onAmazon = COVER_HOSTS.some(
-    (allowed) => host === allowed || host.endsWith(`.${allowed}`)
-  )
-
-  return onAmazon ? url.toString() : undefined
-}
-
-/**
- * Amazon packs every author into one colon-delimited string, each written
- * "Last, First" — `"Alonso, Ana:Callaghan, Harrison:"`. Splitting on commas
- * would turn one author into two. `normalizeAuthors` already handles this
- * shape, including the trailing separator.
- */
-function parseAuthors(value: unknown): string[] {
-  const entries = (Array.isArray(value) ? value : [value])
-    .map((entry) => asString(entry))
-    .filter((entry): entry is string => !!entry)
-
-  return entries.flatMap((entry) => normalizeAuthors([entry]))
-}
-
-/**
- * Pull the books out of one library response.
- *
- * Kept separate from the network call so it can be tested against a recorded
- * payload — the shape is Amazon's to change, and a silent parse failure here
- * would look identical to an empty library.
- */
-export function parseLibraryPage(payload: unknown): LibraryPage {
-  if (!payload || typeof payload !== 'object') return { books: [] }
-
-  const record = payload as Record<string, unknown>
-  const rawItems = record.itemsList ?? record.items ?? record.OwnedItems
-  if (!Array.isArray(rawItems)) return { books: [] }
-
-  const books: LibraryBook[] = []
-  for (const item of rawItems) {
-    if (!item || typeof item !== 'object') continue
-
-    const entry = item as Record<string, unknown>
-    const rawAsin = asString(entry.asin) ?? asString(entry.ASIN)
-    if (!rawAsin) continue
-
-    const asin = rawAsin.toUpperCase()
-    books.push({
-      asin,
-      title: asString(entry.title) ?? asin,
-      authors: parseAuthors(entry.authors ?? entry.author),
-      resourceType: asString(entry.resourceType),
-      percentageRead:
-        typeof entry.percentageRead === 'number'
-          ? entry.percentageRead
-          : undefined,
-      // Despite its name, `productUrl` holds the cover thumbnail — an
-      // m.media-amazon.com image — which is what the live endpoint returned
-      // when this was written.
-      coverUrl: safeCoverUrl(entry.productUrl)
-    })
-  }
-
-  return {
-    books,
-    paginationToken:
-      asString(record.paginationToken) ?? asString(record.nextPageToken)
-  }
-}
 
 export class NotSignedInError extends Error {
   constructor() {

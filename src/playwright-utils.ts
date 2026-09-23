@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-non-null-asserted-optional-chain */
 import type { PageNav, TocItem } from './types'
-import { assert, deromanize } from './utils'
+import { assert, deromanize } from './pure-utils'
 
 export function parsePageNav(text: string | null): PageNav | undefined {
   {

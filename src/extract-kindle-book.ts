@@ -13,14 +13,10 @@ import { chromium } from 'patchright'
 import sharp from 'sharp'
 
 import type {
-  AmazonRenderLocationMap,
-  AmazonRenderToc,
-  AmazonRenderTocItem,
   BookMetadata,
   CaptureStatus,
   CaptureStopReason,
-  PageNav,
-  TocItem
+  PageNav
 } from './types'
 import {
   inspectProfileLock,
@@ -40,17 +36,23 @@ import {
   shouldStopBeforeCapture,
   shouldStopCapture
 } from './capture-termination'
-import { parsePageNav, parseTocItems } from './playwright-utils'
+import { parsePageNav } from './playwright-utils'
+import {
+  applyRenderFiles,
+  applyStartReading,
+  applyYjMetadata,
+  emptyNav,
+  finalizeBookNav,
+  normalizePageNumber,
+  pageForPosition
+} from './render-metadata'
 import {
   assert,
   extractTar,
   getEnv,
   hashObject,
-  normalizeAuthors,
   normalizeBookMetadata,
-  PAGE_IMAGES_DIR,
-  parseJsonpResponse,
-  tryReadJsonFile
+  PAGE_IMAGES_DIR
 } from './utils'
 
 // Block amazon analytics requests
@@ -384,16 +386,7 @@ export async function extractBook(
     captureId: randomUUID(),
     pages: [],
     // locationMap: { locations: [], navigationUnit: [] },
-    nav: {
-      startPosition: -1,
-      endPosition: -1,
-      startContentPosition: -1,
-      startContentPage: -1,
-      endContentPosition: -1,
-      endContentPage: -1,
-      totalNumPages: -1,
-      totalNumContentPages: -1
-    }
+    nav: emptyNav()
   }
 
   // Create a fresh page for this book extraction
@@ -447,28 +440,9 @@ export async function extractBook(
         const url = new URL(response.url())
         if (url.pathname.endsWith('YJmetadata.jsonp')) {
           const body = await response.text()
-          const metadata = parseJsonpResponse<any>(body)
-          if (metadata.asin !== asin) return
-
-          delete metadata.cpr
-
-          // Amazon sends authors as `"Last, First:Last2, First2:"`. Every reader
-          // of the stored metadata (the exporters, book-status) reads
-          // `authorList`, so that is the field to normalize; `authorsList` is
-          // accepted too in case Amazon ever spells it that way, but it is
-          // folded into `authorList` so the stored shape stays the one
-          // `AmazonBookMeta` declares.
-          const rawAuthors: unknown = Array.isArray(metadata.authorList)
-            ? metadata.authorList
-            : metadata.authorsList
-          delete metadata.authorsList
-          metadata.authorList = Array.isArray(rawAuthors)
-            ? normalizeAuthors(rawAuthors.map(String))
-            : []
-
-          if (!result.meta) {
-            warnVerbose('book meta', metadata)
-            result.meta = metadata
+          const meta = applyYjMetadata(result, body, asin)
+          if (meta) {
+            warnVerbose('book meta', meta)
           }
         } else if (
           url.hostname === 'read.amazon.com' &&
@@ -476,13 +450,9 @@ export async function extractBook(
         ) {
           if (url.pathname === '/service/mobile/reader/startReading') {
             const body: any = await response.json()
-            delete body.karamelToken
-            delete body.metadataUrl
-            delete body.YJFormatVersion
-            if (!result.info) {
-              warnVerbose('book info', body)
+            if (applyStartReading(result, body)) {
+              warnVerbose('book info', result.info)
             }
-            result.info = body
           } else if (url.pathname === '/renderer/render') {
             // TODO: these TAR files have some useful metadata that we could use...
             const params = Object.fromEntries(url.searchParams.entries())
@@ -498,102 +468,23 @@ export async function extractBook(
               numPage
             })
 
-            const locationMap = await tryReadJsonFile<
-              Partial<AmazonRenderLocationMap>
-            >(path.join(renderDir, 'location_map.json'))
-            if (locationMap) {
-              const locations = Array.isArray(locationMap.locations)
-                ? locationMap.locations
-                : []
-              const rawNavigationUnit = Array.isArray(
-                locationMap.navigationUnit
-              )
-                ? locationMap.navigationUnit
-                : []
-
-              const navigationUnit =
-                rawNavigationUnit.length > 0
-                  ? rawNavigationUnit
-                  : locations.map((startPosition, index) => ({
-                      startPosition,
-                      label: `${index + 1}`,
-                      page: index + 1
-                    }))
-
-              for (const [index, navUnit] of navigationUnit.entries()) {
-                const parsedPage = Number.parseInt(
-                  `${navUnit.page ?? navUnit.label ?? ''}`,
-                  10
-                )
-                navUnit.page = Number.isNaN(parsedPage) ? index + 1 : parsedPage
-              }
-
-              result.locationMap = {
-                locations,
-                navigationUnit
-              }
-            }
-
-            const metadata = await tryReadJsonFile<any>(
-              path.join(renderDir, 'metadata.json')
+            // The same interpretation the native app applies to the TAR it
+            // intercepts, so both write the same metadata.json.
+            const readRenderFile = (name: string) =>
+              fs
+                .readFile(path.join(renderDir, name), 'utf8')
+                .catch(() => undefined)
+            applyRenderFiles(
+              result,
+              {
+                locationMap: await readRenderFile('location_map.json'),
+                metadata: await readRenderFile('metadata.json'),
+                toc: await readRenderFile('toc.json')
+              },
+              asin
             )
-            if (metadata) {
-              result.nav.startPosition = metadata.firstPositionId
-              result.nav.endPosition = metadata.lastPositionId
-
-              // Fallback for books opened in "resume" mode: when the account
-              // has existing reading progress, the web reader skips the
-              // cold-open `startReading` and `YJmetadata.jsonp` requests, so
-              // `result.info` / `result.meta` never arrive over the network.
-              // The render metadata carries the whole-book range plus
-              // title/author, so synthesize the minimal fields we depend on.
-              if (!result.meta) {
-                result.meta = {
-                  asin,
-                  title: metadata.bookTitle,
-                  authorList: Array.isArray(metadata.authors)
-                    ? normalizeAuthors(metadata.authors)
-                    : [],
-                  language: metadata.lang ?? '',
-                  positions: {
-                    cover: metadata.coverPosistion ?? 0,
-                    srl: metadata.srl ?? 0,
-                    toc: 0
-                  },
-                  sample: false,
-                  startPosition: metadata.firstPositionId,
-                  endPosition: metadata.lastPositionId
-                } as any
-              }
-              if (!result.info) {
-                result.info = {
-                  requestedAsin: asin,
-                  deliveredAsin: asin,
-                  isOwned: true,
-                  isSample: false,
-                  srl: metadata.srl ?? 0
-                } as any
-              }
-            }
-
-            const rawToc = await tryReadJsonFile<AmazonRenderToc>(
-              path.join(renderDir, 'toc.json')
-            )
-            if (rawToc && result.locationMap && !result.toc) {
-              const toc: TocItem[] = []
-
-              for (const rawTocItem of rawToc) {
-                toc.push(...getTocItems(rawTocItem, { depth: 0 }))
-              }
-
-              result.toc = toc
-            }
 
             // TODO: `page_data_0_5.json` has start/end/words for each page in this render batch
-            // const toc = JSON.parse(
-            //   await fs.readFile(path.join(tempDir, 'toc.json'), 'utf8')
-            // )
-            // console.warn('toc', toc)
           }
         }
       } catch {}
@@ -920,7 +811,7 @@ export async function extractBook(
           pageNav.page ??
           (pageNav.location === undefined
             ? undefined
-            : getPageForPosition(pageNav.location))
+            : pageForPosition(result.locationMap, pageNav.location))
 
         if (currentPage === pageNumber) return
         if (pageNumber === 1 && currentPage !== undefined && currentPage <= 1) {
@@ -1049,19 +940,6 @@ export async function extractBook(
       return parsePageNav(footerText)
     }
 
-    function normalizePageNumberFromNav(
-      pageNav: PageNav | undefined,
-      { fallbackPage }: { fallbackPage: number }
-    ): number {
-      if (!pageNav) return fallbackPage
-      if (pageNav.page !== undefined) return pageNav.page
-      if (pageNav.location !== undefined) {
-        return getPageForPosition(pageNav.location)
-      }
-
-      return fallbackPage
-    }
-
     async function ensureFixedHeaderUI() {
       await page.locator('.top-chrome').evaluate((el) => {
         el.style.transition = 'none'
@@ -1142,46 +1020,6 @@ export async function extractBook(
       )
     }
 
-    function getTocItems(
-      rawTocItem: AmazonRenderTocItem,
-      { depth = 0 }: { depth?: number } = {}
-    ): TocItem[] {
-      const positionId = rawTocItem.tocPositionId
-      const page = getPageForPosition(positionId)
-
-      const tocItem: TocItem = {
-        label: rawTocItem.label,
-        positionId,
-        page,
-        depth
-      }
-
-      const tocItems: TocItem[] = [tocItem]
-
-      if (rawTocItem.entries) {
-        for (const rawTocItemEntry of rawTocItem.entries) {
-          tocItems.push(...getTocItems(rawTocItemEntry, { depth: depth + 1 }))
-        }
-      }
-
-      return tocItems
-    }
-
-    function getPageForPosition(position: number): number {
-      if (!result.locationMap) return -1
-
-      let resultPage = 1
-
-      // TODO: this is O(n) but we can do better
-      for (const { startPosition, page } of result.locationMap.navigationUnit) {
-        if (startPosition > position) break
-
-        resultPage = page
-      }
-
-      return resultPage
-    }
-
     // Wait for the book to render before touching the reader UI. The settings
     // panel used to be driven while the content was still loading, so the sync
     // dialog would appear mid-click and Playwright would retry against its
@@ -1204,50 +1042,12 @@ export async function extractBook(
 
     // At this point, we should have recorded all the base book metadata from the
     // initial network requests.
-    assert(result.info, 'expected book info to be initialized')
-    assert(result.meta, 'expected book meta to be initialized')
-    assert(result.locationMap, 'expected book location map to be initialized')
-
-    if (!result.toc?.length) {
+    const { usedFallbackToc } = finalizeBookNav(result)
+    if (usedFallbackToc) {
       console.warn(
         'book toc was not initialized from render responses; synthesizing fallback toc item'
       )
-      result.toc = [
-        {
-          label: 'Start',
-          positionId: result.meta.startPosition,
-          page: getPageForPosition(result.meta.startPosition),
-          depth: 0
-        }
-      ]
     }
-
-    result.nav.startContentPosition = result.meta.startPosition
-    result.nav.totalNumPages = result.locationMap.navigationUnit.reduce(
-      (acc, navUnit) => {
-        return Math.max(acc, navUnit.page ?? -1)
-      },
-      -1
-    )
-    assert(result.nav.totalNumPages > 0, 'parsed book nav has no pages')
-    result.nav.startContentPage = getPageForPosition(
-      result.nav.startContentPosition
-    )
-
-    const parsedToc = parseTocItems(result.toc, {
-      totalNumPages: result.nav.totalNumPages
-    })
-    result.nav.endContentPage =
-      parsedToc.firstPostContentPageTocItem?.page ?? result.nav.totalNumPages
-    result.nav.endContentPosition =
-      parsedToc.firstPostContentPageTocItem?.positionId ??
-      result.nav.endPosition
-
-    result.nav.totalNumContentPages = Math.min(
-      parsedToc.firstPostContentPageTocItem?.page ?? result.nav.totalNumPages,
-      result.nav.totalNumPages
-    )
-    assert(result.nav.totalNumContentPages > 0, 'No content pages found')
     const pageNumberPaddingAmount = `${result.nav.totalNumContentPages * 2}`
       .length
 
@@ -1378,9 +1178,11 @@ export async function extractBook(
     do {
       const pageNav = await getPageNav()
       const index = result.pages.length
-      const currentNavPage = normalizePageNumberFromNav(pageNav, {
-        fallbackPage: index + 1
-      })
+      const currentNavPage = normalizePageNumber(
+        pageNav,
+        result.locationMap,
+        index + 1
+      )
       const footerCurrentValue = pageNav?.page ?? pageNav?.location
 
       const stopBeforeCapture = shouldStopBeforeCapture({

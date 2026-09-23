@@ -4,7 +4,8 @@ import path from 'node:path'
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import type { ContentChunk } from './types'
+import type { BookMetadata, ContentChunk, ContentStore } from './types'
+import { renderBookMarkdown } from './book-markdown'
 import {
   createGithubSlugger,
   exportBookMarkdown,
@@ -204,5 +205,47 @@ describe('exportBookMarkdown', () => {
       await fs.readFile(path.join(outDir, ASIN, 'content.json'), 'utf8')
     ) as { chunks: ContentChunk[] }
     expect(stored.chunks[0]!.text).toContain('STALE')
+  })
+})
+
+describe('renderBookMarkdown', () => {
+  it('is exactly what exportBookMarkdown writes', async () => {
+    await writeBook([
+      chunk(0, 'Opening words.'),
+      chunk(1, 'Some prose.\n\nBOOK DETAILS\n\nMore prose.'),
+      chunk(2, 'First notes.'),
+      chunk(3, 'Second notes.')
+    ])
+    const bookDir = path.join(outDir, ASIN)
+    const metadata = JSON.parse(
+      await fs.readFile(path.join(bookDir, 'metadata.json'), 'utf8')
+    ) as BookMetadata
+    const store = JSON.parse(
+      await fs.readFile(path.join(bookDir, 'content.json'), 'utf8')
+    ) as ContentStore
+
+    const written = await exportBookMarkdown({ asin: ASIN, outDir })
+    const rendered = renderBookMarkdown(metadata, store)
+
+    expect(path.basename(written)).toBe(rendered.fileName)
+    expect(rendered.fileName).toBe('a_test_book.md')
+    expect(await fs.readFile(written, 'utf8')).toBe(rendered.markdown)
+    // Bare chunks are taken as this capture's, as `content` is by the export.
+    expect(renderBookMarkdown(metadata, store.chunks)).toEqual(rendered)
+  })
+
+  it('checks a store against the capture it claims to be from', async () => {
+    await writeBook([chunk(0, 'Stale text.')], { captureId: 'capture-0' })
+    const bookDir = path.join(outDir, ASIN)
+    const metadata = JSON.parse(
+      await fs.readFile(path.join(bookDir, 'metadata.json'), 'utf8')
+    ) as BookMetadata
+
+    expect(() =>
+      renderBookMarkdown(metadata, {
+        captureId: 'capture-0',
+        chunks: [chunk(0, 'Stale text.')]
+      })
+    ).toThrow('no book content found')
   })
 })

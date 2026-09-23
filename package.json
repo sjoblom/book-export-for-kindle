@@ -30,6 +30,7 @@
   "scripts": {
     "build": "run-s build:*",
     "build:js": "tsup",
+    "build:core": "tsup --config tsup.core.config.ts",
     "build:ocr": "sh scripts/build-vision-ocr.sh",
     "package": "bash scripts/package-app.sh",
     "kindle-export": "tsx src/cli.ts",
