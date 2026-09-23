@@ -19,6 +19,11 @@ export interface UserConfig {
   openaiApiKey?: string
   outDir?: string
   concurrency?: number
+  /**
+   * The web app also writes a PDF of every book it exports. Markdown is
+   * always written; PDF is the optional extra, off unless asked for.
+   */
+  alsoPdf?: boolean
 }
 
 export function configDir(): string {
@@ -50,6 +55,9 @@ export async function loadConfig(): Promise<UserConfig> {
       !isPositiveInteger(config.concurrency)
     ) {
       delete config.concurrency
+    }
+    if (config.alsoPdf !== undefined && typeof config.alsoPdf !== 'boolean') {
+      delete config.alsoPdf
     }
 
     return config

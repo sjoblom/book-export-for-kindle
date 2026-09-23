@@ -67,8 +67,8 @@ Options
   -h, --help             show this help
   -v, --version          show the version
 
-The web app ('kindle-export serve') walks through the same steps in a browser:
-sign in to Amazon, tick the books, download the results.
+The web app ('kindle-export serve') does the same in a browser: it shows your
+Kindle library, and clicking a book exports it, ready to download.
 
 On macOS, pages are read on this machine for free using Apple's Vision
 framework — no API key, no model to choose, no per-page cost. Reading them

@@ -83,8 +83,17 @@ export type PipelineEvent =
   | { kind: 'warn'; message: string }
   /** A stage is starting work (not emitted when its output is reused). */
   | { kind: 'stage'; stage: 'capture' | 'transcribe' | 'export' }
-  /** Pages captured so far; total is unknown until the reader reports it. */
-  | { kind: 'capture-progress'; captured: number; total?: number }
+  /**
+   * Screens captured so far, and the book page the capture has reached. A
+   * page can span several screens, so only `page` is comparable with `total`
+   * (the book's content pages, unknown until the reader reports them).
+   */
+  | {
+      kind: 'capture-progress'
+      captured: number
+      page?: number
+      total?: number
+    }
   | { kind: 'transcribe-progress'; done: number; total: number }
 
 export type EmitEvent = (event: PipelineEvent) => void
@@ -218,10 +227,17 @@ async function capture(
       if (captured <= lastCaptured) return
 
       lastCaptured = captured
-      const total = partial?.nav?.totalNumPages
+      // Content pages, where the capture stops — not every page in the book,
+      // which counts back matter it never reaches.
+      const total =
+        partial?.capture?.totalContentPages ??
+        partial?.nav?.totalNumContentPages ??
+        partial?.nav?.totalNumPages
+      const page = partial?.pages?.at(-1)?.page
       emit({
         kind: 'capture-progress',
         captured,
+        page: page && page > 0 ? page : undefined,
         total: total && total > 0 ? total : undefined
       })
     })

@@ -12,6 +12,24 @@ vi.mock('./config', () => ({
   saveConfig: async () => '/dev/null'
 }))
 
+// A stand-in for the browser capture: it writes metadata the way the real one
+// does, then holds on long enough for the pipeline's progress poll to read it.
+const fakeCapture = vi.hoisted(() => ({
+  metadata: undefined as unknown
+}))
+vi.mock('./extract-kindle-book', () => ({
+  runExtraction: async ({ asin, outDir }: { asin: string; outDir: string }) => {
+    const { default: fsp } = await import('node:fs/promises')
+    const { default: p } = await import('node:path')
+    await fsp.mkdir(p.join(outDir, asin), { recursive: true })
+    await fsp.writeFile(
+      p.join(outDir, asin, 'metadata.json'),
+      JSON.stringify(fakeCapture.metadata)
+    )
+    await new Promise((resolve) => setTimeout(resolve, 2500))
+  }
+}))
+
 const { bookFellShort, EMPTY_OPTIONS, processBook } = await import('./pipeline')
 
 let outDir: string
@@ -197,5 +215,50 @@ describe('processBook', () => {
     expect(
       warnings.filter((line) => line.includes('stopped at page 2 of 10'))
     ).toHaveLength(1)
+  })
+})
+
+describe('capture progress', () => {
+  it('reports the page reached against content pages, not screens', async () => {
+    // Five screens over three pages of content: counting screens against
+    // pages is what showed "page 210 of about 116" in the web app.
+    fakeCapture.metadata = {
+      captureId: 'capture-1',
+      capture: {
+        complete: true,
+        reason: 'end-of-book',
+        lastPage: 3,
+        totalContentPages: 3
+      },
+      meta: { title: 'Screens', authorList: [] },
+      nav: { totalNumPages: 4, totalNumContentPages: 3 },
+      toc: [{ label: 'One', positionId: 1, page: 1, depth: 0 }],
+      pages: [1, 1, 2, 2, 3].map((page, index) => ({
+        index,
+        page,
+        screenshot: `pages/00${index}.png`
+      }))
+    }
+
+    const progress: PipelineEvent[] = []
+    await processBook(
+      ASIN,
+      {
+        ...EMPTY_OPTIONS,
+        command: 'capture',
+        outDir,
+        profileDir: path.join(outDir, '.profile')
+      },
+      (event) => {
+        if (event.kind === 'capture-progress') progress.push(event)
+      }
+    )
+
+    expect(progress.at(-1)).toEqual({
+      kind: 'capture-progress',
+      captured: 5,
+      page: 3,
+      total: 3
+    })
   })
 })

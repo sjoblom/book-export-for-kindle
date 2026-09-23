@@ -20,32 +20,43 @@ know the ASIN, pass it directly: `kindle-export B01H4G2J1U`.
 
 ## The web app
 
-`kindle-export serve` opens a local page in your browser that walks through
-the whole flow — made so that someone who never touches a terminal can use
-this after a one-time install:
+`kindle-export serve` opens a local page in your browser — made so that
+someone who never touches a terminal can use this after a one-time install.
+There are no steps to work through; the page is your Kindle library:
 
-1. **Sign in to Amazon** — a Chrome window opens on Amazon's own sign-in page.
-   Password and 2FA happen there, exactly as they would anywhere; the window
-   closes itself when the sign-in is confirmed. The app never sees the
-   password.
-2. **Pick books** — your Kindle library with search, checkboxes, and badges on
-   books that were already exported.
-3. **Export** — live progress per book. Capture happens in a minimized Chrome
-   window that turns the pages by itself, and pops back up only if Amazon
-   wants a sign-in. Books that finish with unreadable pages are labelled
-   honestly instead of pretending success.
-4. **Download** — every finished book is listed with download buttons (and
-   "Show in Finder" on macOS), including books exported in earlier runs.
+- **It loads by itself.** The list from the last launch shows straight away,
+  and a minimized Chrome window refreshes it in the background. If Amazon
+  says nobody is signed in, its sign-in page opens once, by itself: sign in
+  there the way you always do (password, any code Amazon sends) and the
+  window closes itself. The app never sees the password. After that, a
+  **Sign in to Amazon** button is there if it's needed again.
+- **Click a book to export it.** Clicking more books while one is exporting
+  lines them up behind it; a waiting book can be taken off the queue, and
+  **Stop after this book** clears the queue without cutting the current
+  capture short. Capture happens in a minimized Chrome window that turns the
+  pages by itself and pops up only if Amazon wants a sign-in.
+- **Each book's card says where it is** — waiting, capturing (page x of y),
+  reading text, building the file, done — and finished books have a
+  **Download** button (and **Show in Finder** on macOS), including books
+  exported in earlier runs. A book that finished short says so honestly and
+  offers the fix: **Capture again** when the capture stopped part-way,
+  **Retry missing pages** when some pages couldn't be read.
 
-On macOS that is the whole list: pages are read on the Mac itself, so there is
-no key to enter and no model to choose. Off macOS (or without the Xcode tools
-that build local OCR), a **Settings** step comes first and asks for an OpenAI
-API key, stored in `~/.kindle-export/config.json` and readable only by you.
+Books are saved as Markdown. The settings menu (the gear) has a switch to
+also make a PDF of each book, shows where books are saved, and can sign in to
+Amazon again. The library list is cached inside the browser profile
+(`kindle-export-library.json`), so it belongs to the signed-in account and
+goes away with the profile.
+
+On macOS there is nothing else to set up: pages are read on the Mac itself, so
+there is no key to enter and no model to choose. Off macOS (or without the
+Xcode tools that build local OCR), the page first asks for an OpenAI API key,
+stored in `~/.kindle-export/config.json` and readable only by you.
 
 The server binds `127.0.0.1` only — nothing is reachable from the network —
 and rejects requests whose `Host` or headers don't come from its own page.
-Everything the CLI can do beyond this (per-stage commands, `--force`, PDF
-output, cleanup) still works from the terminal; the two share one pipeline and
+Everything the CLI can do beyond this (per-stage commands, `--force`,
+cleanup) still works from the terminal; the two share one pipeline and
 one on-disk state, so you can mix them freely.
 
 ### A double-clickable app
@@ -84,10 +95,13 @@ read. The pipeline is three stages:
 3. **export** — reassembles the text into markdown.
 
 Re-running skips any stage whose output already exists, but how much of a
-half-finished book survives depends on the stage. A capture that was
-interrupted cannot be continued: it is reported as incomplete, and the book has
-to be captured again from the beginning with `--force-capture` (the web app
-shows a **Capture again** button on such a book instead). Transcription
+half-finished book survives depends on the stage. When the Kindle reader stops
+turning pages mid-capture, the capture reloads it, returns to the last page it
+saved and carries on, up to three times. A capture that still can't finish, or
+whose run was interrupted, cannot be continued later: it is reported as
+incomplete, and the book has to be captured again from the beginning with
+`--force-capture` (the web app shows a **Capture again** button on such a book
+instead). Transcription
 resumes at page granularity — if some pages fail, re-running retries only
 those, rather than paying to read the whole book again. Export is regenerated
 from `content.json` whenever it is asked for, so it costs nothing to redo. Use

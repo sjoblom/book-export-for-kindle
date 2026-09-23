@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { parseLibraryPage } from './kindle-library'
+import { parseLibraryPage, safeCoverUrl } from './kindle-library'
 
 describe('parseLibraryPage', () => {
   it('reads books out of a library response', () => {
@@ -133,5 +133,63 @@ describe('parseLibraryPage', () => {
     expect(
       parseLibraryPage({ itemsList: [{ asin: 'B1' }] }).paginationToken
     ).toBeUndefined()
+  })
+
+  // The field and host as the live endpoint sent them (other fields trimmed).
+  it('keeps the cover thumbnail Amazon sends as productUrl', () => {
+    const { books } = parseLibraryPage({
+      itemsList: [
+        {
+          asin: 'B0CWB2WCVZ',
+          webReaderUrl: 'https://read.amazon.com/?asin=B0CWB2WCVZ',
+          productUrl:
+            'https://m.media-amazon.com/images/I/21eKpPCdU-L._SY400_.jpg',
+          title: 'A Book',
+          authors: ['Writer, A:'],
+          resourceType: 'EBOOK',
+          originType: 'PURCHASE'
+        },
+        { asin: 'B2', title: 'No cover' }
+      ]
+    })
+
+    expect(books[0]!.coverUrl).toBe(
+      'https://m.media-amazon.com/images/I/21eKpPCdU-L._SY400_.jpg'
+    )
+    expect(books[1]!.coverUrl).toBeUndefined()
+  })
+})
+
+/** Spelled in two halves so the linter doesn't take the test data for code. */
+const SCRIPT_URL = ['javascript', 'alert(1)'].join(':')
+
+describe('safeCoverUrl', () => {
+  it('accepts https images on Amazon image hosts', () => {
+    for (const url of [
+      'https://m.media-amazon.com/images/I/abc.jpg',
+      'https://images-na.ssl-images-amazon.com/images/I/abc.jpg',
+      'https://media-amazon.com/x.jpg'
+    ]) {
+      expect(safeCoverUrl(url)).toBe(url)
+    }
+  })
+
+  it('drops anything that is not an https Amazon image URL', () => {
+    // Each of these would be rendered straight into an <img> by the web app.
+    for (const value of [
+      undefined,
+      42,
+      '',
+      'not a url',
+      'http://m.media-amazon.com/images/I/abc.jpg',
+      'https://evil.example/images/I/abc.jpg',
+      'https://m.media-amazon.com.evil.example/abc.jpg',
+      'https://evilmedia-amazon.com/abc.jpg',
+      'https://user:pw@m.media-amazon.com/abc.jpg',
+      SCRIPT_URL,
+      'data:image/png;base64,AAAA'
+    ]) {
+      expect(safeCoverUrl(value)).toBeUndefined()
+    }
   })
 })

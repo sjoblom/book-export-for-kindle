@@ -25,6 +25,11 @@ export interface LibraryBook {
   resourceType?: string
   /** 0-100, when Amazon reports reading progress. */
   percentageRead?: number
+  /**
+   * The cover thumbnail Amazon shows in its own library, when it sent one.
+   * Always an https URL on Amazon's image hosts; see `safeCoverUrl`.
+   */
+  coverUrl?: string
 }
 
 export interface LibraryPage {
@@ -34,6 +39,44 @@ export interface LibraryPage {
 
 function asString(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value.trim() : undefined
+}
+
+/**
+ * Hosts Amazon serves product images from. The web app puts this URL straight
+ * into an `<img>`, so anything else — another site, plain http, a `javascript:`
+ * or `data:` URL — is dropped rather than rendered.
+ */
+const COVER_HOSTS = [
+  'media-amazon.com',
+  'images-amazon.com',
+  'ssl-images-amazon.com'
+]
+
+/**
+ * The cover URL if it is an https image on one of Amazon's image hosts,
+ * otherwise `undefined`.
+ *
+ * Exported because the web app's library cache is read back from disk, where
+ * a hand-edited or stale file deserves the same scrutiny as the live payload.
+ */
+export function safeCoverUrl(value: unknown): string | undefined {
+  const raw = asString(value)
+  if (!raw) return
+
+  let url: URL
+  try {
+    url = new URL(raw)
+  } catch {
+    return
+  }
+
+  if (url.protocol !== 'https:' || url.username || url.password) return
+  const host = url.hostname.toLowerCase()
+  const onAmazon = COVER_HOSTS.some(
+    (allowed) => host === allowed || host.endsWith(`.${allowed}`)
+  )
+
+  return onAmazon ? url.toString() : undefined
 }
 
 /**
@@ -81,7 +124,11 @@ export function parseLibraryPage(payload: unknown): LibraryPage {
       percentageRead:
         typeof entry.percentageRead === 'number'
           ? entry.percentageRead
-          : undefined
+          : undefined,
+      // Despite its name, `productUrl` holds the cover thumbnail — an
+      // m.media-amazon.com image — which is what the live endpoint returned
+      // when this was written.
+      coverUrl: safeCoverUrl(entry.productUrl)
     })
   }
 

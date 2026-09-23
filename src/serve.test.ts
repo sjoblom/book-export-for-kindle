@@ -2,10 +2,14 @@ import fs from 'node:fs/promises'
 import http from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
+import vm from 'node:vm'
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { UserConfig } from './config'
+import type * as ExtractKindleBook from './extract-kindle-book'
+import type * as KindleLibrary from './kindle-library'
+import type { LibraryBook } from './kindle-library'
 import type * as Pipeline from './pipeline'
 
 // The server reads and writes the stored config; the real one lives in the
@@ -21,8 +25,8 @@ vi.mock('./config', () => ({
 
 /**
  * Jobs are driven through a stand-in pipeline: the real one opens Chrome and
- * reads a book for an hour. Everything around it — validation, the single-job
- * rule, the options the job is started with — is the server's own code.
+ * reads a book for an hour. Everything around it — validation, the queue, the
+ * options each book is started with — is the server's own code.
  */
 const pipelineCalls = vi.hoisted(() => [] as Array<Record<string, unknown>>)
 const gate = vi.hoisted(() => ({
@@ -46,7 +50,10 @@ vi.mock('./pipeline', async (importOriginal) => {
 
       if (gate.hold) {
         await new Promise<void>((resolve) => {
-          gate.release = resolve
+          gate.release = () => {
+            gate.release = undefined
+            resolve()
+          }
         })
       }
 
@@ -68,6 +75,93 @@ vi.mock('./pipeline', async (importOriginal) => {
   }
 })
 
+/**
+ * Chrome, Amazon and the sign-in window, stood in for. The server starts a
+ * library refresh the moment it is created, so every test runs against these;
+ * each test can say what the next library read finds.
+ */
+type LibraryOutcome = LibraryBook[] | 'signed-out'
+const browser = vi.hoisted(() => ({
+  launches: 0,
+  libraryReads: 0,
+  logins: 0,
+  loginConfirms: true,
+  profileBusy: false,
+  /** Outcomes for the next library reads, in order; then `fallback`. */
+  outcomes: [] as unknown[],
+  fallback: undefined as unknown,
+  holdLibrary: false,
+  releaseLibrary: undefined as (() => void) | undefined
+}))
+
+vi.mock('./extract-kindle-book', async (importOriginal) => {
+  const actual = await importOriginal<typeof ExtractKindleBook>()
+  const page = {}
+  const context = {
+    pages: () => [page],
+    newPage: async () => page,
+    close: async () => {},
+    browser: () => null
+  }
+
+  return {
+    ...actual,
+    launchBrowserContext: async () => {
+      browser.launches++
+      if (browser.profileBusy) {
+        throw Object.assign(new Error('profile busy'), { code: 'PROFILE_BUSY' })
+      }
+      return context
+    },
+    hideBrowserWindow: async () => {}
+  }
+})
+
+vi.mock('./kindle-library', async (importOriginal) => {
+  const actual = await importOriginal<typeof KindleLibrary>()
+
+  return {
+    ...actual,
+    fetchLibrary: async () => {
+      browser.libraryReads++
+      if (browser.holdLibrary) {
+        await new Promise<void>((resolve) => {
+          browser.releaseLibrary = () => {
+            browser.releaseLibrary = undefined
+            resolve()
+          }
+        })
+      }
+
+      const outcome = (
+        browser.outcomes.length ? browser.outcomes.shift() : browser.fallback
+      ) as LibraryOutcome
+      if (outcome === 'signed-out') throw new actual.NotSignedInError()
+      return outcome
+    }
+  }
+})
+
+vi.mock('./session', () => ({
+  interactiveLogin: async () => {
+    browser.logins++
+    return browser.loginConfirms
+  }
+}))
+
+/** Spelled in two halves so the linter doesn't take the test data for code. */
+const SCRIPT_URL = ['javascript', 'alert(1)'].join(':')
+
+const LIBRARY: LibraryBook[] = [
+  {
+    asin: 'B00TEST',
+    title: 'The Test Book',
+    authors: ['Ann Author'],
+    coverUrl: 'https://m.media-amazon.com/images/I/test.jpg'
+  },
+  { asin: 'B00OTHER', title: 'Another Book', authors: [] }
+]
+
 const { createServeHandle } = await import('./serve')
 const { EMPTY_OPTIONS } = await import('./pipeline')
 const { isVisionOcrAvailable } = await import('./vision-ocr')
@@ -81,11 +175,33 @@ let outDir: string
 let handle: Handle
 let port: number
 
+function serveOptions(extra: Partial<Pipeline.Options> = {}) {
+  return {
+    ...EMPTY_OPTIONS,
+    command: 'serve',
+    outDir,
+    profileDir: path.join(outDir, '.profile'),
+    port: 0,
+    ...extra
+  }
+}
+
 beforeEach(async () => {
   stored = {}
   pipelineCalls.length = 0
   gate.hold = false
   gate.release = undefined
+  Object.assign(browser, {
+    launches: 0,
+    libraryReads: 0,
+    logins: 0,
+    loginConfirms: true,
+    profileBusy: false,
+    outcomes: [],
+    fallback: LIBRARY,
+    holdLibrary: false,
+    releaseLibrary: undefined
+  })
   vi.stubEnv('OPENAI_API_KEY', '')
 
   outDir = await fs.mkdtemp(path.join(os.tmpdir(), 'kindle-export-serve-'))
@@ -96,18 +212,15 @@ beforeEach(async () => {
   // A file outside the book folder that a traversal would reach.
   await fs.writeFile(path.join(outDir, 'secret.md'), 'should stay put')
 
-  handle = await createServeHandle({
-    ...EMPTY_OPTIONS,
-    command: 'serve',
-    outDir,
-    profileDir: path.join(outDir, '.profile'),
-    port: 0
-  })
+  handle = await createServeHandle(serveOptions())
   port = Number(new URL(handle.url).port)
 })
 
 afterEach(async () => {
+  gate.hold = false
   gate.release?.()
+  browser.holdLibrary = false
+  browser.releaseLibrary?.()
   await handle.close()
   await fs.rm(outDir, { recursive: true, force: true })
   vi.unstubAllEnvs()
@@ -116,9 +229,10 @@ afterEach(async () => {
 function post(
   pathname: string,
   body?: unknown,
-  headers?: Record<string, string>
+  headers?: Record<string, string>,
+  base = handle.url
 ) {
-  return fetch(handle.url + pathname, {
+  return fetch(base + pathname, {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
@@ -142,8 +256,24 @@ async function until(
   }
 }
 
-async function getState(): Promise<any> {
-  return (await fetch(handle.url + '/api/state')).json()
+async function getState(base = handle.url): Promise<any> {
+  return (await fetch(base + '/api/state')).json()
+}
+
+/** Wait until nothing holds the browser: no refresh, sign-in or export. */
+async function idle(base = handle.url): Promise<any> {
+  let state: any
+  await until(async () => {
+    state = await getState(base)
+    return state.busy === null
+  }, 'the browser to be free')
+  return state
+}
+
+/** The queue entries, reduced to what the tests compare. */
+async function queued(base = handle.url): Promise<string[]> {
+  const state = await getState(base)
+  return state.queue.books.map((b: any) => `${b.asin}:${b.status}`)
 }
 
 /** A request with full header control, for what fetch won't let us send. */
@@ -172,17 +302,30 @@ describe('serve', () => {
   })
 
   it('reports state, including books found on disk', async () => {
-    const res = await fetch(handle.url + '/api/state')
-    expect(res.status).toBe(200)
+    const state = await idle()
 
-    const state = (await res.json()) as any
     expect(state.hasApiKey).toBe(false)
-    expect(state.amazon).toBe('unknown')
+    expect(state.alsoPdf).toBe(false)
+    expect(state.profileBusy).toBe(false)
+    expect(state.queue).toEqual({ books: [], stopRequested: false, log: [] })
     expect(state.diskBooks).toHaveLength(1)
     expect(state.diskBooks[0]).toMatchObject({ asin: 'B00TEST' })
     expect(state.diskBooks[0].exports.map((f: any) => f.name)).toEqual([
       'the-book.md'
     ])
+    expect(state).not.toHaveProperty('job')
+  })
+
+  it('page script parses', async () => {
+    // The script is a string inside a TypeScript template literal, where a
+    // stray backtick or backslash breaks it without any compiler noticing.
+    const html = await (await fetch(handle.url + '/')).text()
+    const script = /<script>([\s\S]*)<\/script>/.exec(html)?.[1]
+    expect(script).toBeTruthy()
+    // Compiled, not run: a syntax error throws here.
+    expect(() => new vm.Script(script!)).not.toThrow()
+    // Every write the page makes has to carry the app header.
+    expect(script).toContain("'x-kindle-export': '1'")
   })
 
   it('rejects requests with a foreign Host header (DNS rebinding)', async () => {
@@ -191,60 +334,58 @@ describe('serve', () => {
   })
 
   it('rejects writes without the app header (cross-site requests)', async () => {
-    const res = await fetch(handle.url + '/api/library', { method: 'POST' })
-    expect(res.status).toBe(403)
+    for (const pathname of ['/api/library', '/api/export', '/api/queue/stop']) {
+      const res = await fetch(handle.url + pathname, { method: 'POST' })
+      expect(res.status).toBe(403)
+    }
   })
 
   it('reports whether pages can be read on this machine', async () => {
-    const state = (await (await fetch(handle.url + '/api/state')).json()) as any
-    // Drives the whole Settings step: with local OCR there is nothing to fill
-    // in, so it must reflect reality rather than a guess about the platform.
+    const state = await getState()
+    // Drives the whole key form: with local OCR there is nothing to fill in,
+    // so it must reflect reality rather than a guess about the platform.
     expect(state.localOcr).toBe(localOcr)
   })
 
   it('refuses to export without an API key when started with a model', async () => {
     // Naming a model means OpenAI reads the pages, so a key is required even
     // where local OCR would otherwise have covered it.
-    const withModel = await createServeHandle({
-      ...EMPTY_OPTIONS,
-      command: 'serve',
-      outDir,
-      profileDir: path.join(outDir, '.profile'),
-      port: 0,
-      model: 'gpt-test'
-    })
+    const withModel = await createServeHandle(
+      serveOptions({ model: 'gpt-test' })
+    )
 
     try {
-      const state = (await (
-        await fetch(withModel.url + '/api/state')
-      ).json()) as any
+      const state = await idle(withModel.url)
       expect(state.needsApiKey).toBe(true)
 
-      const res = await fetch(withModel.url + '/api/export', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', 'x-kindle-export': '1' },
-        body: JSON.stringify({ asins: ['B00TEST'] })
-      })
+      const res = await post(
+        '/api/export',
+        { asin: 'B00TEST' },
+        {},
+        withModel.url
+      )
       expect(res.status).toBe(400)
       expect(((await res.json()) as any).error).toMatch(/API key/)
 
-      // With a key, the job reads pages with the model `serve` was given.
+      // With a key, the book is read with the model `serve` was given.
       vi.stubEnv('OPENAI_API_KEY', 'sk-test')
-      const started = await fetch(withModel.url + '/api/export', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', 'x-kindle-export': '1' },
-        body: JSON.stringify({ asins: ['B00TEST'] })
-      })
+      const started = await post(
+        '/api/export',
+        { asin: 'B00TEST' },
+        {},
+        withModel.url
+      )
       expect(started.status).toBe(202)
       await until(() => pipelineCalls.length === 1, 'the book to be processed')
       expect(pipelineCalls[0]!.model).toBe('gpt-test')
+      await idle(withModel.url)
     } finally {
       await withModel.close()
     }
   })
 
   it('needs a key exactly when this machine cannot read pages', async () => {
-    const state = (await (await fetch(handle.url + '/api/state')).json()) as any
+    const state = await getState()
     expect(state.needsApiKey).toBe(!localOcr)
     // Choosing a model is not something the page can do, so it isn't told
     // about one either.
@@ -255,7 +396,7 @@ describe('serve', () => {
   it.skipIf(localOcr)(
     'refuses to export without an API key when there is no local OCR',
     async () => {
-      const res = await post('/api/export', { asins: ['B00TEST'] })
+      const res = await post('/api/export', { asin: 'B00TEST' })
       expect(res.status).toBe(400)
       expect(((await res.json()) as any).error).toMatch(/API key/)
     }
@@ -263,11 +404,25 @@ describe('serve', () => {
 
   it('validates the export request before touching a browser', async () => {
     vi.stubEnv('OPENAI_API_KEY', 'sk-test')
+    await idle()
 
-    for (const asins of [[], ['b00!bad'], ['../escape'], 'B00TEST']) {
-      const res = await post('/api/export', { asins })
-      expect(res.status).toBe(400)
+    for (const body of [
+      {},
+      { asin: '' },
+      { asin: 'b00!bad' },
+      { asin: '../escape' },
+      { asin: ['B00TEST'] },
+      { asins: ['B00TEST'] },
+      { asin: 'A'.repeat(21) },
+      { asin: 'B00TEST', formats: 'pdf' },
+      { asin: 'B00TEST', formats: ['docx'] }
+    ]) {
+      const res = await post('/api/export', body)
+      expect(res.status, JSON.stringify(body)).toBe(400)
     }
+
+    expect(pipelineCalls).toHaveLength(0)
+    expect((await getState()).queue.books).toEqual([])
   })
 
   it('saves settings and makes the key usable without a restart', async () => {
@@ -275,8 +430,7 @@ describe('serve', () => {
     expect(res.status).toBe(200)
 
     expect(stored).toEqual({ openaiApiKey: 'sk-new' })
-    const state = (await (await fetch(handle.url + '/api/state')).json()) as any
-    expect(state.hasApiKey).toBe(true)
+    expect((await getState()).hasApiKey).toBe(true)
   })
 
   it('ignores a model sent to the settings endpoint', async () => {
@@ -286,7 +440,7 @@ describe('serve', () => {
     expect(res.status).toBe(200)
 
     expect(stored).toEqual({ openaiApiKey: 'sk-new' })
-    const state = (await (await fetch(handle.url + '/api/state')).json()) as any
+    const state = await getState()
     expect(state.needsApiKey).toBe(!localOcr)
     expect(state).not.toHaveProperty('model')
   })
@@ -297,6 +451,19 @@ describe('serve', () => {
     const res = await post('/api/config', {})
     expect(res.status).toBe(200)
     expect(stored).toEqual({ openaiApiKey: 'sk-old', outDir: 'books' })
+  })
+
+  it('makes a PDF as well once the setting is on', async () => {
+    vi.stubEnv('OPENAI_API_KEY', 'sk-test')
+
+    const res = await post('/api/config', { alsoPdf: true })
+    expect(res.status).toBe(200)
+    expect(stored).toEqual({ alsoPdf: true })
+    expect((await getState()).alsoPdf).toBe(true)
+
+    expect((await post('/api/export', { asin: 'B00TEST' })).status).toBe(202)
+    await until(() => pipelineCalls.length === 1, 'the book to be processed')
+    expect(pipelineCalls[0]!.formats).toEqual(['md', 'pdf'])
   })
 
   it('downloads an exported file', async () => {
@@ -325,7 +492,7 @@ describe('serve', () => {
       `attachment; filename="book.md"; filename*=UTF-8''${encodeURIComponent(name)}`
     )
     // Latin-1 only, or Node would never have written it in the first place.
-    expect(disposition).toMatch(/^[\u0020-\u007E]+$/)
+    expect(disposition).toMatch(/^[ -~]+$/)
   })
 
   it('refuses download paths that leave the book folder', async () => {
@@ -350,10 +517,10 @@ describe('serve', () => {
     // The only way out of a capture that stopped part-way: without this the
     // same truncated book is rebuilt from the same pages every time.
     vi.stubEnv('OPENAI_API_KEY', 'sk-test')
+    gate.hold = true
 
     const res = await post('/api/export', {
-      asins: ['B00TEST'],
-      formats: ['md'],
+      asin: 'B00TEST',
       forceCapture: true
     })
     expect(res.status).toBe(202)
@@ -366,7 +533,8 @@ describe('serve', () => {
     })
 
     // The page needs to know a run is a re-capture, not an ordinary export.
-    expect((await getState()).job.forceCapture).toBe(true)
+    const [book] = (await getState()).queue.books
+    expect(book).toMatchObject({ asin: 'B00TEST', forceCapture: true })
   })
 
   it('resumes rather than re-captures for an ordinary export', async () => {
@@ -374,10 +542,18 @@ describe('serve', () => {
     // pipeline resumes page by page when it is left alone.
     vi.stubEnv('OPENAI_API_KEY', 'sk-test')
 
-    expect((await post('/api/export', { asins: ['B00TEST'] })).status).toBe(202)
+    expect((await post('/api/export', { asin: 'B00TEST' })).status).toBe(202)
 
     await until(() => pipelineCalls.length === 1, 'the book to be processed')
-    expect(pipelineCalls[0]).toMatchObject({ forceCapture: false })
+    expect(pipelineCalls[0]).toMatchObject({
+      forceCapture: false,
+      formats: ['md']
+    })
+
+    const state = await idle()
+    expect(state.queue.books).toMatchObject([
+      { asin: 'B00TEST', title: 'The Test Book', status: 'done' }
+    ])
   })
 
   it('reads pages without a model stored by an older setup', async () => {
@@ -386,48 +562,324 @@ describe('serve', () => {
     vi.stubEnv('OPENAI_API_KEY', 'sk-test')
     stored = { model: 'gpt-4.1-mini' } as UserConfig
 
-    expect((await post('/api/export', { asins: ['B00TEST'] })).status).toBe(202)
+    expect((await post('/api/export', { asin: 'B00TEST' })).status).toBe(202)
 
     await until(() => pipelineCalls.length === 1, 'the book to be processed')
     expect(pipelineCalls[0]!.model).toBeUndefined()
   })
 
-  it('re-captures one book at a time', async () => {
-    vi.stubEnv('OPENAI_API_KEY', 'sk-test')
-
-    const res = await post('/api/export', {
-      asins: ['B00TEST', 'B00OTHER'],
-      forceCapture: true
-    })
-    expect(res.status).toBe(400)
-    expect(pipelineCalls).toHaveLength(0)
-  })
-
-  it('refuses a second run while one is going', async () => {
-    // One browser, one profile: the busy rule has to hold for a re-capture
-    // started from the downloads list too.
-    vi.stubEnv('OPENAI_API_KEY', 'sk-test')
-    gate.hold = true
-
-    expect((await post('/api/export', { asins: ['B00TEST'] })).status).toBe(202)
-    await until(() => pipelineCalls.length === 1, 'the first job to start')
-
-    const second = await post('/api/export', {
-      asins: ['B00TEST'],
-      forceCapture: true
-    })
-    expect(second.status).toBe(409)
-    expect(pipelineCalls).toHaveLength(1)
-
-    gate.release?.()
-    await until(
-      async () => (await getState()).busy === null,
-      'the first job to finish'
-    )
-  })
-
   it('stays quiet about unknown routes', async () => {
     const res = await fetch(handle.url + '/api/nope')
     expect(res.status).toBe(404)
+  })
+})
+
+describe('serve queue', () => {
+  beforeEach(async () => {
+    vi.stubEnv('OPENAI_API_KEY', 'sk-test')
+    await idle()
+    gate.hold = true
+  })
+
+  it('queues books clicked while one is exporting, and runs them in order', async () => {
+    expect((await post('/api/export', { asin: 'B00TEST' })).status).toBe(202)
+    await until(() => pipelineCalls.length === 1, 'the first book to start')
+
+    // One browser profile, one book at a time: the second click waits.
+    expect((await post('/api/export', { asin: 'B00OTHER' })).status).toBe(202)
+    expect(await queued()).toEqual(['B00TEST:working', 'B00OTHER:queued'])
+    expect((await getState()).busy).toBe('export')
+    expect(pipelineCalls).toHaveLength(1)
+
+    gate.release?.()
+    await until(() => pipelineCalls.length === 2, 'the second book to start')
+    expect(pipelineCalls.map((call) => call.asin)).toEqual([
+      'B00TEST',
+      'B00OTHER'
+    ])
+
+    gate.release?.()
+    await idle()
+    expect(await queued()).toEqual(['B00TEST:done', 'B00OTHER:done'])
+  })
+
+  it('does not queue a book twice', async () => {
+    await post('/api/export', { asin: 'B00TEST' })
+    await until(() => pipelineCalls.length === 1, 'the first book to start')
+    await post('/api/export', { asin: 'B00OTHER' })
+
+    // A double click, or a click on a book already being exported, is the
+    // same request again.
+    for (const asin of ['B00OTHER', 'B00TEST']) {
+      expect((await post('/api/export', { asin })).status).toBe(202)
+    }
+    expect(await queued()).toEqual(['B00TEST:working', 'B00OTHER:queued'])
+  })
+
+  it('exports a finished book again when asked, replacing its outcome', async () => {
+    gate.hold = false
+    await post('/api/export', { asin: 'B00TEST' })
+    await until(() => pipelineCalls.length === 1, 'the first export')
+    await idle()
+
+    await post('/api/export', { asin: 'B00TEST' })
+    await until(() => pipelineCalls.length === 2, 'the second export')
+    await idle()
+    expect(await queued()).toEqual(['B00TEST:done'])
+  })
+
+  it('removes a waiting book, but not the one being exported', async () => {
+    await post('/api/export', { asin: 'B00TEST' })
+    await until(() => pipelineCalls.length === 1, 'the first book to start')
+    await post('/api/export', { asin: 'B00OTHER' })
+
+    expect((await post('/api/queue/remove', { asin: 'B00OTHER' })).status).toBe(
+      200
+    )
+    expect(await queued()).toEqual(['B00TEST:working'])
+
+    expect((await post('/api/queue/remove', { asin: 'B00TEST' })).status).toBe(
+      409
+    )
+    expect((await post('/api/queue/remove', { asin: 'B00NONE' })).status).toBe(
+      404
+    )
+    expect((await post('/api/queue/remove', { asin: '../x' })).status).toBe(400)
+
+    gate.release?.()
+    await idle()
+    expect(pipelineCalls.map((call) => call.asin)).toEqual(['B00TEST'])
+  })
+
+  it('stops after the current book, and runs books clicked after that', async () => {
+    await post('/api/export', { asin: 'B00TEST' })
+    await until(() => pipelineCalls.length === 1, 'the first book to start')
+    await post('/api/export', { asin: 'B00OTHER' })
+    await post('/api/export', { asin: 'B00THIRD' })
+
+    // Everything waiting comes off the queue; the current book finishes, as
+    // cutting a capture short would only leave a truncated book.
+    expect((await post('/api/queue/stop')).status).toBe(200)
+    let state = await getState()
+    expect(state.queue.stopRequested).toBe(true)
+    expect(await queued()).toEqual(['B00TEST:working'])
+
+    // A book clicked after Stop is a new request, not one Stop cancelled.
+    await post('/api/export', { asin: 'B00FOURTH' })
+    state = await getState()
+    expect(state.queue.stopRequested).toBe(false)
+
+    gate.release?.()
+    await until(() => pipelineCalls.length === 2, 'the next book to start')
+    gate.release?.()
+    await idle()
+    expect(pipelineCalls.map((call) => call.asin)).toEqual([
+      'B00TEST',
+      'B00FOURTH'
+    ])
+  })
+
+  it('caps how many books can wait at once', async () => {
+    await post('/api/export', { asin: 'B00TEST' })
+    await until(() => pipelineCalls.length === 1, 'the first book to start')
+
+    for (let i = 1; i < 50; i++) {
+      const res = await post('/api/export', {
+        asin: `B${String(i).padStart(9, '0')}`
+      })
+      expect(res.status).toBe(202)
+    }
+    const over = await post('/api/export', { asin: 'B999999999' })
+    expect(over.status).toBe(400)
+    expect((await getState()).queue.books).toHaveLength(50)
+  })
+
+  it('refuses to refresh the library while exporting', async () => {
+    // The export holds the browser profile; a refresh would have to open it
+    // a second time.
+    await post('/api/export', { asin: 'B00TEST' })
+    await until(() => pipelineCalls.length === 1, 'the book to start')
+
+    const reads = browser.libraryReads
+    expect((await post('/api/library')).status).toBe(409)
+    expect(browser.libraryReads).toBe(reads)
+  })
+})
+
+describe('serve start-up', () => {
+  it('reads the library in the background as soon as it starts', async () => {
+    const state = await idle()
+
+    expect(browser.libraryReads).toBe(1)
+    expect(state.amazon).toBe('signed-in')
+    expect(state.library.fromCache).toBe(false)
+    expect(state.library.books.map((b: any) => b.asin)).toEqual([
+      'B00TEST',
+      'B00OTHER'
+    ])
+    expect(state.library.books[0].coverUrl).toBe(LIBRARY[0]!.coverUrl)
+
+    // ... and keeps it for the next launch.
+    const cache: any = JSON.parse(
+      await fs.readFile(
+        path.join(outDir, '.profile', 'kindle-export-library.json'),
+        'utf8'
+      )
+    )
+    expect(cache.books.map((b: any) => b.asin)).toEqual(['B00TEST', 'B00OTHER'])
+    expect(typeof cache.fetchedAt).toBe('number')
+  })
+
+  it('shows the cached library straight away while it refreshes', async () => {
+    await idle()
+    await fs.writeFile(
+      path.join(outDir, '.profile', 'kindle-export-library.json'),
+      JSON.stringify({
+        version: 1,
+        fetchedAt: 1234,
+        books: [
+          {
+            asin: 'B00CACHED',
+            title: 'From Last Time',
+            authors: ['Someone'],
+            coverUrl: 'https://m.media-amazon.com/images/I/c.jpg'
+          },
+          // Read back from disk, so checked like the live payload is.
+          {
+            asin: 'B00EVIL',
+            title: 'Bad Cover',
+            authors: [],
+            coverUrl: SCRIPT_URL
+          },
+          { asin: '../nope', title: 'Bad ASIN', authors: [] }
+        ]
+      })
+    )
+
+    browser.holdLibrary = true
+    const second = await createServeHandle(serveOptions())
+    try {
+      const state = await getState(second.url)
+      expect(state.busy).toBe('library')
+      expect(state.library).toMatchObject({ fetchedAt: 1234, fromCache: true })
+      expect(state.library.books).toEqual([
+        {
+          asin: 'B00CACHED',
+          title: 'From Last Time',
+          authors: ['Someone'],
+          coverUrl: 'https://m.media-amazon.com/images/I/c.jpg'
+        },
+        { asin: 'B00EVIL', title: 'Bad Cover', authors: [] }
+      ])
+
+      await until(() => !!browser.releaseLibrary, 'the refresh to start')
+      browser.releaseLibrary!()
+      const refreshed = await idle(second.url)
+      expect(refreshed.library.fromCache).toBe(false)
+      expect(refreshed.library.books.map((b: any) => b.asin)).toEqual([
+        'B00TEST',
+        'B00OTHER'
+      ])
+    } finally {
+      browser.holdLibrary = false
+      browser.releaseLibrary?.()
+      await second.close()
+    }
+  })
+
+  it('opens the sign-in window once when nobody is signed in, then reads the library', async () => {
+    await idle()
+    browser.outcomes = ['signed-out', LIBRARY]
+    browser.loginConfirms = true
+
+    const second = await createServeHandle(serveOptions())
+    try {
+      const state = await idle(second.url)
+      expect(browser.logins).toBe(1)
+      expect(state.amazon).toBe('signed-in')
+      expect(state.library.books).toHaveLength(2)
+    } finally {
+      await second.close()
+    }
+  })
+
+  it('does not open the sign-in window by itself a second time', async () => {
+    await idle()
+    browser.fallback = 'signed-out'
+    browser.loginConfirms = false // the person closed the window
+
+    const second = await createServeHandle(serveOptions())
+    try {
+      let state = await idle(second.url)
+      expect(browser.logins).toBe(1)
+      expect(state.amazon).toBe('signed-out')
+
+      // A refresh by hand still finds nobody signed in, and now the page
+      // offers the button instead of the app reopening the window.
+      const reads = browser.libraryReads
+      expect((await post('/api/library', {}, {}, second.url)).status).toBe(202)
+      state = await idle(second.url)
+      expect(browser.libraryReads).toBe(reads + 1)
+      expect(browser.logins).toBe(1)
+      expect(state.amazon).toBe('signed-out')
+
+      // The button itself always works.
+      browser.loginConfirms = true
+      browser.fallback = LIBRARY
+      expect((await post('/api/login', {}, {}, second.url)).status).toBe(202)
+      state = await idle(second.url)
+      expect(browser.logins).toBe(2)
+      expect(state.amazon).toBe('signed-in')
+    } finally {
+      await second.close()
+    }
+  })
+
+  it('says so when another run holds the browser, without opening sign-in', async () => {
+    await idle()
+    browser.profileBusy = true
+
+    const second = await createServeHandle(serveOptions())
+    try {
+      const state = await idle(second.url)
+      expect(state.profileBusy).toBe(true)
+      expect(state.libraryError).toMatch(/Another kindle-export/)
+      expect(browser.logins).toBe(0)
+
+      // Retry by hand once the other run is done.
+      browser.profileBusy = false
+      await post('/api/library', {}, {}, second.url)
+      const after = await idle(second.url)
+      expect(after.profileBusy).toBe(false)
+      expect(after.libraryError).toBeUndefined()
+      expect(after.library.books).toHaveLength(2)
+    } finally {
+      await second.close()
+    }
+  })
+
+  it('starts a book clicked during the first library load once the load is done', async () => {
+    vi.stubEnv('OPENAI_API_KEY', 'sk-test')
+    await idle()
+    browser.holdLibrary = true
+
+    const second = await createServeHandle(serveOptions())
+    try {
+      await until(() => !!browser.releaseLibrary, 'the refresh to start')
+      expect(
+        (await post('/api/export', { asin: 'B00TEST' }, {}, second.url)).status
+      ).toBe(202)
+      expect(await queued(second.url)).toEqual(['B00TEST:queued'])
+      expect(pipelineCalls).toHaveLength(0)
+
+      browser.releaseLibrary!()
+      await until(() => pipelineCalls.length === 1, 'the export to start')
+      await idle(second.url)
+      expect(await queued(second.url)).toEqual(['B00TEST:done'])
+    } finally {
+      browser.holdLibrary = false
+      browser.releaseLibrary?.()
+      await second.close()
+    }
   })
 })

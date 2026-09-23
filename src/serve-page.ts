@@ -1,6 +1,10 @@
 /**
  * The web app's single page: markup, styles and client script in one string,
- * served with no external assets so it works offline and never phones home.
+ * served with no external scripts, styles or fonts so it works offline. The
+ * one thing fetched from elsewhere is each book's cover thumbnail, straight
+ * from Amazon's image host (the server only passes on https URLs on Amazon's
+ * own image domains, and the request carries no referrer); a book without one
+ * gets a drawn placeholder instead.
  *
  * The client script deliberately avoids template literals — the whole page
  * lives inside one TypeScript template string, and nested backticks are a
@@ -16,314 +20,543 @@ const PAGE = `<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
 <title>Kindle Export</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📖</text></svg>">
 <style>
 :root {
-  --bg: #f6f4f0;
-  --card: #ffffff;
-  --text: #1f1b16;
-  --muted: #6f675e;
-  --border: #e4dfd7;
-  --accent: #955115;
+  color-scheme: light dark;
+  --bg: #f5f5f7;
+  --surface: #ffffff;
+  --surface-2: #fbfbfd;
+  --text: #1d1d1f;
+  --muted: #6e6e73;
+  --faint: #8e8e93;
+  --border: rgba(0, 0, 0, 0.1);
+  --border-strong: rgba(0, 0, 0, 0.18);
+  --accent: #0071e3;
+  --accent-hover: #0077ed;
   --accent-text: #ffffff;
-  --accent-soft: #f4e8dc;
-  --good: #1a7f37;
-  --good-soft: #e3f2e7;
-  --warn: #9a6700;
-  --warn-soft: #fbf0d9;
-  --bad: #c03030;
-  --bad-soft: #fbe5e5;
-  --track: #eee9e1;
+  --accent-soft: rgba(0, 113, 227, 0.1);
+  --good: #1f8a3b;
+  --good-soft: rgba(52, 199, 89, 0.14);
+  --warn: #a15c00;
+  --warn-soft: rgba(255, 159, 10, 0.16);
+  --bad: #c9162b;
+  --bad-soft: rgba(255, 59, 48, 0.12);
+  --track: rgba(0, 0, 0, 0.08);
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.06), 0 4px 14px rgba(0, 0, 0, 0.06);
+  --shadow-lift: 0 2px 6px rgba(0, 0, 0, 0.08), 0 12px 28px rgba(0, 0, 0, 0.12);
+  --topbar: rgba(245, 245, 247, 0.82);
+  --skeleton: rgba(0, 0, 0, 0.06);
+  --focus: 0 0 0 3px rgba(0, 113, 227, 0.45);
+  --radius: 12px;
 }
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #191512;
-    --card: #211d19;
-    --text: #ece7e0;
-    --muted: #a49a8e;
-    --border: #38322b;
-    --accent: #e8944a;
-    --accent-text: #201409;
-    --accent-soft: #33261a;
-    --good: #4cc06a;
-    --good-soft: #1d2f22;
-    --warn: #e0aa3e;
-    --warn-soft: #322a17;
-    --bad: #e06c6c;
-    --bad-soft: #382020;
-    --track: #322d27;
+    --bg: #1c1c1e;
+    --surface: #2c2c2e;
+    --surface-2: #242426;
+    --text: #f5f5f7;
+    --muted: #a1a1a6;
+    --faint: #8e8e93;
+    --border: rgba(255, 255, 255, 0.1);
+    --border-strong: rgba(255, 255, 255, 0.2);
+    --accent: #0a84ff;
+    --accent-hover: #409cff;
+    --accent-text: #ffffff;
+    --accent-soft: rgba(10, 132, 255, 0.18);
+    --good: #32d74b;
+    --good-soft: rgba(50, 215, 75, 0.16);
+    --warn: #ffb340;
+    --warn-soft: rgba(255, 159, 10, 0.18);
+    --bad: #ff6961;
+    --bad-soft: rgba(255, 69, 58, 0.18);
+    --track: rgba(255, 255, 255, 0.14);
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 4px 14px rgba(0, 0, 0, 0.25);
+    --shadow-lift: 0 2px 6px rgba(0, 0, 0, 0.35), 0 12px 28px rgba(0, 0, 0, 0.4);
+    --topbar: rgba(28, 28, 30, 0.82);
+    --skeleton: rgba(255, 255, 255, 0.07);
+    --focus: 0 0 0 3px rgba(10, 132, 255, 0.55);
   }
 }
 * { box-sizing: border-box; }
+html, body { margin: 0; }
 body {
-  margin: 0;
   background: var(--bg);
   color: var(--text);
-  font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font: 14px/1.45 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", "Segoe UI", Roboto, sans-serif;
   -webkit-font-smoothing: antialiased;
+  min-height: 100vh;
 }
-main { max-width: 720px; margin: 0 auto; padding: 32px 20px 80px; }
-header { margin-bottom: 24px; }
-h1 { font-size: 26px; margin: 0 0 4px; letter-spacing: -0.02em; }
-h1 .logo { margin-right: 8px; }
-.tagline { color: var(--muted); margin: 0; }
-.card {
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  padding: 20px;
-  margin-bottom: 16px;
+[hidden] { display: none !important; }
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
 }
-.card h2 {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  font-size: 16px;
-  margin: 0 0 6px;
-}
-.stepnum {
-  flex: none;
-  width: 24px;
-  height: 24px;
-  border-radius: 50%;
-  background: var(--track);
-  color: var(--muted);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 13px;
-  font-weight: 600;
-}
-.stepnum.done { background: var(--good-soft); color: var(--good); }
-.hint { color: var(--muted); font-size: 13.5px; margin: 0 0 14px; }
-.row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
-label.field { display: block; margin-bottom: 12px; }
-label.field span { display: block; font-size: 13px; font-weight: 600; margin-bottom: 4px; }
-input[type=text], input[type=password], input[type=search] {
-  width: 100%;
-  padding: 9px 12px;
-  border: 1px solid var(--border);
-  border-radius: 9px;
-  background: var(--bg);
-  color: var(--text);
-  font: inherit;
-}
-input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
-button {
-  font: inherit;
-  font-weight: 600;
-  padding: 9px 16px;
-  border-radius: 9px;
-  border: 1px solid var(--border);
-  background: var(--card);
-  color: var(--text);
-  cursor: pointer;
-}
-button:hover:not(:disabled) { border-color: var(--accent); }
-button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
-button.primary:hover:not(:disabled) { filter: brightness(1.08); }
-button:disabled { opacity: 0.55; cursor: default; }
-button.small { padding: 5px 10px; font-size: 13px; font-weight: 500; }
-a.filelink {
-  display: inline-block;
-  padding: 5px 10px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  font-size: 13px;
-  text-decoration: none;
-  color: var(--accent);
-  font-weight: 600;
-}
-a.filelink:hover { border-color: var(--accent); }
-.pill {
-  display: inline-block;
-  padding: 2px 9px;
-  border-radius: 999px;
-  font-size: 12px;
-  font-weight: 600;
-  white-space: nowrap;
-}
-.pill.good { background: var(--good-soft); color: var(--good); }
-.pill.warn { background: var(--warn-soft); color: var(--warn); }
-.pill.bad { background: var(--bad-soft); color: var(--bad); }
-.pill.busy { background: var(--accent-soft); color: var(--accent); }
-.pill.idle { background: var(--track); color: var(--muted); }
-.booklist { margin: 12px 0 0; border: 1px solid var(--border); border-radius: 10px; max-height: 420px; overflow-y: auto; }
-.bookrow {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 9px 12px;
+svg.icon { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+
+/* ---------------------------------------------------------------- top bar */
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: var(--topbar);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  backdrop-filter: saturate(180%) blur(20px);
   border-bottom: 1px solid var(--border);
-  cursor: pointer;
 }
-.bookrow:last-child { border-bottom: none; }
-.bookrow:hover { background: var(--bg); }
-.bookrow input { flex: none; width: 16px; height: 16px; accent-color: var(--accent); }
-.bookrow .meta { flex: 1; min-width: 0; }
-.bookrow .title { font-weight: 600; font-size: 14px; }
-.bookrow .authors { color: var(--muted); font-size: 12.5px; }
-.jobrow { padding: 12px 0; border-bottom: 1px solid var(--border); }
-.jobrow:last-child { border-bottom: none; }
-.jobrow .toprow { display: flex; align-items: center; gap: 10px; }
-.jobrow .title { flex: 1; font-weight: 600; font-size: 14px; min-width: 0; }
-.progress { height: 6px; border-radius: 999px; background: var(--track); margin-top: 8px; overflow: hidden; }
-.progress .fill { height: 100%; border-radius: 999px; background: var(--accent); transition: width 0.6s ease; }
-.progress.indeterminate .fill { width: 30% !important; animation: slide 1.6s ease-in-out infinite; }
-@keyframes slide { 0% { margin-left: -30%; } 100% { margin-left: 100%; } }
-.warnnote { color: var(--warn); font-size: 13px; margin-top: 6px; }
-.errnote { color: var(--bad); font-size: 13px; margin-top: 6px; }
-.notice {
+.topbar-inner {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 10px 20px;
   display: flex;
-  gap: 10px;
-  align-items: flex-start;
-  background: var(--accent-soft);
-  color: var(--text);
-  border-radius: 10px;
-  padding: 12px 14px;
-  font-size: 13.5px;
-  margin-bottom: 14px;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
 }
-.notice.warn { background: var(--warn-soft); }
-details { margin-top: 12px; }
-summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+.brand { display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1 1 auto; }
+.brand-mark {
+  width: 28px; height: 28px; flex: none;
+  border-radius: 7px;
+  background: linear-gradient(160deg, #3a8dff, #0058c7);
+  color: #fff;
+  display: grid; place-items: center;
+}
+.brand-mark svg.icon { width: 17px; height: 17px; }
+.brand-text { min-width: 0; }
+.brand-name { font-weight: 600; font-size: 15px; letter-spacing: -0.01em; white-space: nowrap; }
+.status { color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; align-items: center; gap: 6px; }
+.dot { width: 7px; height: 7px; border-radius: 50%; background: var(--faint); flex: none; }
+.dot.good { background: var(--good); }
+.dot.warn { background: var(--warn); }
+.dot.busy { background: var(--accent); animation: pulse 1.4s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: 0.35; } }
+.tools { display: flex; align-items: center; gap: 6px; flex: 1 1 320px; max-width: 460px; margin-left: auto; }
+.search { position: relative; flex: 1; min-width: 0; }
+.search svg.icon { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); color: var(--faint); pointer-events: none; }
+.search input {
+  width: 100%;
+  height: 32px;
+  padding: 0 10px 0 32px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.search input::placeholder { color: var(--faint); }
+.search input:focus { outline: none; box-shadow: var(--focus); border-color: var(--accent); }
+.icon-btn {
+  width: 32px; height: 32px; flex: none;
+  display: grid; place-items: center;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 0;
+}
+.icon-btn:hover:not(:disabled) { background: var(--track); color: var(--text); }
+.icon-btn[aria-expanded="true"] { background: var(--track); color: var(--text); }
+.icon-btn:disabled { opacity: 0.4; cursor: default; }
+.icon-btn.spinning svg.icon { animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (max-width: 700px) {
+  .tools { flex-basis: 100%; max-width: none; order: 3; }
+}
+
+/* ------------------------------------------------------------------- menu */
+.menu-wrap { position: relative; }
+.menu {
+  position: absolute;
+  right: 0;
+  top: 40px;
+  width: min(340px, calc(100vw - 32px));
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow-lift);
+  padding: 6px;
+  z-index: 30;
+}
+.menu-section { padding: 10px 12px; }
+.menu-section + .menu-section { border-top: 1px solid var(--border); }
+.menu-label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--faint); margin: 0 0 6px; }
+.menu-path { font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--muted); word-break: break-all; margin: 0 0 8px; user-select: text; }
+.menu-item {
+  display: flex; align-items: center; gap: 8px;
+  width: 100%;
+  padding: 7px 10px;
+  margin: 0 -10px;
+  width: calc(100% + 20px);
+  border: 0; border-radius: 7px;
+  background: transparent; color: var(--text);
+  font: inherit; text-align: left; cursor: pointer;
+}
+.menu-item:hover:not(:disabled) { background: var(--accent-soft); }
+.menu-item:disabled { opacity: 0.5; cursor: default; }
+.switch-row { display: flex; align-items: flex-start; gap: 10px; cursor: pointer; }
+.switch-row .switch-text { flex: 1; }
+.switch-row small { display: block; color: var(--muted); font-size: 12px; margin-top: 2px; }
+.switch {
+  -webkit-appearance: none; appearance: none;
+  width: 34px; height: 20px; flex: none; margin: 1px 0 0;
+  border-radius: 999px; background: var(--track);
+  position: relative; cursor: pointer; transition: background 0.2s;
+}
+.switch::after {
+  content: ""; position: absolute; top: 2px; left: 2px;
+  width: 16px; height: 16px; border-radius: 50%;
+  background: #fff; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+  transition: transform 0.2s;
+}
+.switch:checked { background: var(--good); }
+.switch:checked::after { transform: translateX(14px); }
+.switch:focus-visible { outline: none; box-shadow: var(--focus); }
 .log {
   margin-top: 8px;
-  font: 12px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace;
-  background: var(--bg);
+  font: 11px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
   border-radius: 8px;
-  padding: 10px 12px;
-  max-height: 240px;
+  padding: 8px 10px;
+  max-height: 200px;
   overflow-y: auto;
   white-space: pre-wrap;
   word-break: break-word;
+  color: var(--muted);
 }
 .log .warn { color: var(--warn); }
-.selectbar {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  flex-wrap: wrap;
-  margin-top: 14px;
+details summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+
+/* ----------------------------------------------------------------- layout */
+main { max-width: 1280px; margin: 0 auto; padding: 16px 20px 64px; }
+@media (max-width: 600px) {
+  .topbar-inner { padding: 10px 16px; }
+  main { padding: 14px 16px 56px; }
 }
-.selectbar .count { color: var(--muted); font-size: 13.5px; }
-.formats { display: flex; gap: 12px; align-items: center; font-size: 13.5px; }
-.formats label { display: inline-flex; gap: 5px; align-items: center; cursor: pointer; }
-.formats input { accent-color: var(--accent); }
-.spacer { flex: 1; }
-#toast {
-  position: fixed;
-  left: 50%;
-  bottom: 24px;
-  transform: translateX(-50%);
-  background: var(--bad);
-  color: #fff;
-  padding: 10px 18px;
-  border-radius: 10px;
-  font-size: 14px;
-  max-width: 90vw;
-  opacity: 0;
+
+/* ---------------------------------------------------------------- buttons */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  height: 30px; padding: 0 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit; font-size: 13px; font-weight: 500;
+  text-decoration: none; white-space: nowrap;
+  cursor: pointer;
+}
+.btn:hover:not(:disabled) { background: var(--surface-2); border-color: var(--faint); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+.btn.primary:hover:not(:disabled) { background: var(--accent-hover); border-color: var(--accent-hover); }
+.btn.tint { background: var(--accent-soft); border-color: transparent; color: var(--accent); font-weight: 600; }
+.btn.tint:hover:not(:disabled) { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+.btn.quiet { border-color: transparent; background: transparent; color: var(--muted); }
+.btn.quiet:hover:not(:disabled) { background: var(--track); color: var(--text); border-color: transparent; }
+.btn:disabled { opacity: 0.5; cursor: default; }
+.btn.icon-only { width: 30px; padding: 0; }
+button:focus-visible, a:focus-visible, input:focus-visible, summary:focus-visible {
+  outline: none;
+  box-shadow: var(--focus);
+}
+
+/* ---------------------------------------------------------------- notices */
+.notices { display: flex; flex-direction: column; gap: 10px; margin-bottom: 16px; }
+.notices:empty { display: none; }
+.notice {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 12px 14px;
+}
+.notice-icon {
+  width: 30px; height: 30px; flex: none; border-radius: 50%;
+  display: grid; place-items: center;
+  background: var(--accent-soft); color: var(--accent);
+}
+.notice.warn .notice-icon { background: var(--warn-soft); color: var(--warn); }
+.notice.bad .notice-icon { background: var(--bad-soft); color: var(--bad); }
+.notice-body { flex: 1 1 240px; min-width: 0; }
+.notice-title {
+  font-weight: 600;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.notice-text { color: var(--muted); font-size: 13px; }
+.notice-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.key-form { display: flex; gap: 8px; }
+.key-form input {
+  flex: 1; min-width: 0; height: 30px; padding: 0 10px;
+  border-radius: 8px; border: 1px solid var(--border-strong);
+  background: var(--surface-2); color: var(--text); font: inherit;
+}
+.notice form { display: flex; gap: 8px; flex: 1 1 100%; flex-wrap: wrap; }
+.notice input[type=password] {
+  flex: 1 1 220px; height: 30px; padding: 0 10px;
+  border-radius: 8px; border: 1px solid var(--border-strong);
+  background: var(--surface-2); color: var(--text); font: inherit;
+}
+.notice .bar { flex: 1 1 100%; }
+
+/* ---------------------------------------------------------------- filters */
+.filterbar { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; flex-wrap: wrap; }
+.segmented { display: inline-flex; background: var(--track); border-radius: 8px; padding: 2px; }
+.segmented button {
+  border: 0; background: transparent; color: var(--muted);
+  font: inherit; font-size: 12.5px; font-weight: 500;
+  padding: 4px 12px; border-radius: 6px; cursor: pointer;
+}
+.segmented button[aria-pressed="true"] { background: var(--surface); color: var(--text); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12); }
+.filtercount { color: var(--faint); font-size: 12.5px; }
+
+/* ------------------------------------------------------------------- grid */
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 26px 18px;
+}
+@media (min-width: 1000px) { .grid { grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); } }
+.card { display: flex; flex-direction: column; min-width: 0; }
+.cover {
+  position: relative;
+  aspect-ratio: 2 / 3;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--skeleton);
+  box-shadow: var(--shadow);
+  transition: box-shadow 0.2s, transform 0.2s;
+}
+.card:hover .cover { box-shadow: var(--shadow-lift); }
+.cover img {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  object-fit: cover; display: block;
+}
+.placeholder {
+  position: absolute; inset: 0;
+  display: flex; flex-direction: column; justify-content: space-between;
+  padding: 14px 12px;
+  color: rgba(255, 255, 255, 0.95);
+  background: linear-gradient(155deg, hsl(var(--hue), 42%, 46%), hsl(calc(var(--hue) + 28), 48%, 30%));
+}
+.placeholder .initials { font-size: 34px; font-weight: 700; letter-spacing: -0.02em; line-height: 1; opacity: 0.9; }
+.placeholder .ph-title {
+  font-size: 12.5px; font-weight: 600; line-height: 1.3;
+  display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden;
+}
+.cover-action {
+  position: absolute; inset: 0;
+  border: 0; padding: 0; margin: 0;
+  background: transparent;
+  cursor: pointer;
+  display: flex; align-items: flex-end; justify-content: center;
+  padding-bottom: 14px;
+}
+.cover-action span {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: rgba(0, 0, 0, 0.72); color: #fff;
+  -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+  padding: 6px 12px; border-radius: 999px;
+  font-size: 12.5px; font-weight: 600;
+  opacity: 0; transform: translateY(4px);
+  transition: opacity 0.15s, transform 0.15s;
+}
+.cover-action:hover span, .cover-action:focus-visible span { opacity: 1; transform: none; }
+.cover-action:focus-visible { box-shadow: inset 0 0 0 3px var(--accent); }
+/* No hover on touch screens, but the cover stays tappable and the card's own
+   button says the same thing, so the pill would only repeat it. */
+.badge {
+  position: absolute; top: 8px; right: 8px;
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 3px 8px; border-radius: 999px;
+  font-size: 11px; font-weight: 600;
+  background: rgba(255, 255, 255, 0.92); color: #1d1d1f;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
   pointer-events: none;
-  transition: opacity 0.3s;
-  z-index: 10;
+  z-index: 2;
 }
-#toast.show { opacity: 1; }
-.filedone { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 8px; }
-.mutedsmall { color: var(--muted); font-size: 12.5px; }
+.badge svg.icon { width: 12px; height: 12px; stroke-width: 2.4; }
+.badge.good { color: #1a7f37; }
+.badge.warn { color: #9a5b00; }
+.badge.bad { color: #c9162b; }
+.badge.busy { color: #0058c7; }
+.cover-progress {
+  position: absolute; left: 0; right: 0; bottom: 0;
+  height: 6px; background: rgba(0, 0, 0, 0.4);
+  overflow: hidden;
+  z-index: 2;
+}
+.cover-progress .fill { height: 100%; background: var(--accent); width: 0; transition: width 0.6s ease; }
+.cover-progress.indeterminate .fill { width: 35%; animation: slide 1.5s ease-in-out infinite; }
+@keyframes slide { 0% { transform: translateX(-100%); } 100% { transform: translateX(290%); } }
+.card.working .cover::after {
+  content: ""; position: absolute; inset: 0;
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.35), transparent 45%);
+  pointer-events: none;
+}
+.meta { padding-top: 10px; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.title {
+  margin: 0; font-size: 13.5px; font-weight: 600; line-height: 1.3;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  overflow-wrap: anywhere;
+}
+.author { margin: 0; color: var(--muted); font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.state { font-size: 12px; color: var(--muted); margin-top: 4px; }
+.state.good { color: var(--good); }
+.state.warn { color: var(--warn); }
+.state.bad { color: var(--bad); }
+.state.busy { color: var(--accent); }
+.state-detail { font-size: 12px; color: var(--muted); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.actions .btn { flex: 1 1 auto; }
+.actions .btn.icon-only { flex: none; }
+.tag { display: inline-block; font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--faint); }
+
+/* -------------------------------------------------------- skeleton, empty */
+.skeleton .cover { box-shadow: none; animation: shimmer 1.4s ease-in-out infinite; }
+.skeleton .line { height: 10px; border-radius: 5px; background: var(--skeleton); margin-top: 10px; animation: shimmer 1.4s ease-in-out infinite; }
+.skeleton .line.short { width: 60%; margin-top: 6px; }
+@keyframes shimmer { 50% { opacity: 0.5; } }
+.empty { text-align: center; padding: 64px 16px; color: var(--muted); }
+.empty-icon { width: 52px; height: 52px; margin: 0 auto 14px; border-radius: 14px; display: grid; place-items: center; background: var(--track); color: var(--faint); }
+.empty-icon svg.icon { width: 26px; height: 26px; }
+.empty h2 { color: var(--text); font-size: 17px; margin: 0 0 6px; }
+.empty p { margin: 0 auto 16px; max-width: 380px; }
+
+/* ----------------------------------------------------------------- toasts */
+.toasts {
+  position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%);
+  display: flex; flex-direction: column; gap: 8px; align-items: center;
+  z-index: 50; width: min(440px, calc(100vw - 32px));
+  pointer-events: none;
+}
+.toast {
+  pointer-events: auto;
+  display: flex; align-items: flex-start; gap: 10px;
+  width: 100%;
+  background: var(--surface); color: var(--text);
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--accent);
+  border-radius: 10px;
+  box-shadow: var(--shadow-lift);
+  padding: 10px 12px;
+  font-size: 13px;
+  animation: toast-in 0.2s ease-out;
+}
+.toast.bad { border-left-color: var(--bad); }
+.toast.good { border-left-color: var(--good); }
+.toast .toast-text { flex: 1; }
+.toast .icon-btn { width: 22px; height: 22px; margin: -2px -4px 0 0; }
+@keyframes toast-in { from { opacity: 0; transform: translateY(8px); } }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
+}
 </style>
 </head>
 <body>
-<main>
-  <header>
-    <h1><span class="logo">📖</span>Kindle Export</h1>
-    <p class="tagline">Turn Kindle books you own into files on this computer.</p>
-  </header>
-
-  <section class="card" id="card-settings" hidden>
-    <h2><span class="stepnum" id="step1">1</span>Settings <span id="key-pill"></span></h2>
-    <p class="hint" id="settings-hint">Reading a book's pages uses OpenAI and costs a little money —
-    usually well under a dollar for a whole book. Your key is stored only on
-    this computer.</p>
-    <label class="field"><span>OpenAI API key</span>
-      <input type="password" id="api-key" placeholder="sk-..." autocomplete="off">
-    </label>
-    <div class="row">
-      <button class="primary" id="save-settings">Save settings</button>
-      <span class="mutedsmall" id="settings-msg"></span>
-    </div>
-  </section>
-
-  <section class="card" id="card-amazon">
-    <h2><span class="stepnum" id="step2">1</span>Amazon <span id="amazon-pill"></span></h2>
-    <p class="hint">A Chrome window opens on Amazon's sign-in page. Sign in the
-    way you always do — password, any code Amazon sends you — and the window
-    closes by itself. Your password is never seen or stored by this app.</p>
-    <div class="row">
-      <button class="primary" id="login-btn">Sign in to Amazon</button>
-      <span class="mutedsmall" id="amazon-msg"></span>
-    </div>
-  </section>
-
-  <section class="card" id="card-books">
-    <h2><span class="stepnum" id="step3">2</span>Your books</h2>
-    <p class="hint">Pick the books to export. Books you already exported are
-    marked, and can be downloaded again below without redoing anything.</p>
-    <div class="row">
-      <button class="primary" id="load-library">Show my books</button>
-      <span class="mutedsmall" id="library-msg"></span>
-    </div>
-    <div id="library-area" hidden>
-      <div style="margin-top:14px">
-        <input type="search" id="search" placeholder="Search by title or author…">
+<header class="topbar">
+  <div class="topbar-inner">
+    <div class="brand">
+      <div class="brand-mark" aria-hidden="true"><svg class="icon" viewBox="0 0 24 24"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v15H6.5A2.5 2.5 0 0 0 4 20.5z"/><path d="M4 20.5A2.5 2.5 0 0 0 6.5 23H20v-5"/></svg></div>
+      <div class="brand-text">
+        <div class="brand-name">Kindle Export</div>
+        <div class="status" id="status" role="status" aria-live="polite"><span class="dot" id="status-dot"></span><span id="status-text">Starting…</span></div>
       </div>
-      <div class="booklist" id="booklist"></div>
-      <div class="selectbar">
-        <span class="count" id="sel-count">0 selected</span>
-        <div class="formats" id="formats">
-          <label><input type="checkbox" id="fmt-md" checked> Markdown</label>
-          <label><input type="checkbox" id="fmt-pdf"> PDF</label>
+    </div>
+    <div class="tools">
+      <label class="search">
+        <span class="sr-only">Search your books</span>
+        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        <input type="search" id="search" placeholder="Search by title or author" autocomplete="off" spellcheck="false">
+      </label>
+      <button class="icon-btn" id="refresh-btn" type="button" title="Refresh your library" aria-label="Refresh your library">
+        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></svg>
+      </button>
+      <div class="menu-wrap">
+        <button class="icon-btn" id="menu-btn" type="button" title="Settings" aria-label="Settings" aria-haspopup="true" aria-expanded="false" aria-controls="menu">
+          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
+        </button>
+        <div class="menu" id="menu" role="dialog" aria-label="Settings" hidden>
+          <div class="menu-section">
+            <label class="switch-row">
+              <input type="checkbox" class="switch" id="pdf-switch" role="switch">
+              <span class="switch-text">Also make a PDF
+                <small>Every book is saved as a Markdown text file. Turn this on to get a PDF next to it too.</small></span>
+            </label>
+          </div>
+          <div class="menu-section" id="menu-key" hidden>
+            <p class="menu-label">OpenAI key</p>
+            <form id="menu-key-form" class="key-form">
+              <input type="password" id="menu-key-input" placeholder="Saved — paste a new key to replace it" autocomplete="off" aria-label="New OpenAI API key">
+              <button class="btn" type="submit">Save</button>
+            </form>
+          </div>
+          <div class="menu-section">
+            <p class="menu-label">Books are saved in</p>
+            <p class="menu-path" id="menu-outdir"></p>
+            <button class="menu-item" id="menu-finder" type="button" hidden>
+              <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+              Show books in Finder
+            </button>
+          </div>
+          <div class="menu-section">
+            <button class="menu-item" id="menu-signin" type="button">
+              <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>
+              <span id="menu-signin-text">Sign in to Amazon again</span>
+            </button>
+            <details id="log-details" style="margin-top:6px">
+              <summary>Activity log</summary>
+              <div class="log" id="log"></div>
+            </details>
+          </div>
         </div>
-        <div class="spacer"></div>
-        <button class="primary" id="export-btn" disabled>Export selected</button>
       </div>
     </div>
-  </section>
+  </div>
+</header>
 
-  <section class="card" id="card-job" hidden>
-    <h2>Export progress</h2>
-    <div class="notice" id="chrome-notice" hidden>
-      <span>🪟</span>
-      <span><strong>Chrome is reading your book in the background.</strong> The
-      window is minimized so it stays out of your way — no need to touch it,
-      and it closes on its own when the book is done. If Amazon needs you to
-      sign in, the window pops back up by itself; sign in and it
-      continues.</span>
+<main>
+  <div class="notices" id="notices"></div>
+  <div class="filterbar" id="filterbar" hidden>
+    <div class="segmented" role="group" aria-label="Show">
+      <button type="button" id="filter-all" aria-pressed="true">All books</button>
+      <button type="button" id="filter-done" aria-pressed="false">Exported</button>
     </div>
-    <div id="job-books"></div>
-    <div class="row" style="margin-top:14px">
-      <button id="stop-btn" hidden>Stop after current book</button>
-      <span class="mutedsmall" id="job-msg"></span>
-    </div>
-    <details id="log-details"><summary>Show details</summary>
-      <div class="log" id="job-log"></div>
-    </details>
-  </section>
-
-  <section class="card" id="card-done" hidden>
-    <h2>Finished books on this computer</h2>
-    <p class="hint" id="done-hint"></p>
-    <div id="done-list"></div>
-  </section>
+    <span class="filtercount" id="filtercount"></span>
+  </div>
+  <div class="grid" id="grid" aria-label="Your books"></div>
+  <div class="empty" id="empty" hidden></div>
 </main>
-<div id="toast"></div>
+
+<div class="toasts" id="toasts" aria-live="polite"></div>
 
 <script>
 'use strict'
 
 var state = null
-var selected = new Set()
-var listFingerprint = ''
+var filter = 'all'
+var cards = {}
+var lastStatus = {}
+var firstRender = true
+var ICONS = {
+  check: '<path d="M5 12.5l4.5 4.5L19 7.5"/>',
+  alert: '<path d="M12 8v5"/><path d="M12 16.5v.01"/><path d="M10.3 3.9 2.4 18a2 2 0 0 0 1.7 3h15.8a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/>',
+  clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  download: '<path d="M12 4v11"/><path d="m7 10 5 5 5-5"/><path d="M5 20h14"/>',
+  folder: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
+  x: '<path d="M6 6l12 12"/><path d="M18 6 6 18"/>',
+  user: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
+  window: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18"/>',
+  key: '<circle cx="8" cy="15" r="4"/><path d="m11 12 9-9"/><path d="m17 6 3 3"/>',
+  book: '<path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v15H6.5A2.5 2.5 0 0 0 4 20.5z"/><path d="M4 20.5A2.5 2.5 0 0 0 6.5 23H20v-5"/>',
+  search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>',
+  arrow: '<path d="M12 5v14"/><path d="m5 12 7 7 7-7"/>'
+}
 
 function $(id) { return document.getElementById(id) }
 
@@ -331,23 +564,42 @@ function el(tag, attrs) {
   var node = document.createElement(tag)
   attrs = attrs || {}
   for (var key in attrs) {
-    if (key === 'text') node.textContent = attrs[key]
-    else if (key === 'class') node.className = attrs[key]
-    else if (key === 'onclick') node.addEventListener('click', attrs[key])
-    else node.setAttribute(key, attrs[key])
+    var value = attrs[key]
+    if (value === undefined || value === null || value === false) continue
+    if (key === 'text') node.textContent = value
+    else if (key === 'class') node.className = value
+    else if (key === 'onclick') node.addEventListener('click', value)
+    else node.setAttribute(key, value === true ? '' : value)
   }
   for (var i = 2; i < arguments.length; i++) {
-    if (arguments[i]) node.appendChild(arguments[i])
+    var child = arguments[i]
+    if (child === undefined || child === null || child === false) continue
+    node.appendChild(typeof child === 'string' ? document.createTextNode(child) : child)
   }
   return node
 }
 
-function toast(message) {
-  var node = $('toast')
-  node.textContent = message
-  node.classList.add('show')
-  clearTimeout(node._timer)
-  node._timer = setTimeout(function () { node.classList.remove('show') }, 6000)
+/** Icons are fixed markup from ICONS above, never anything from the server. */
+function icon(name) {
+  var ns = 'http://www.w3.org/2000/svg'
+  var svg = document.createElementNS(ns, 'svg')
+  svg.setAttribute('class', 'icon')
+  svg.setAttribute('viewBox', '0 0 24 24')
+  svg.setAttribute('aria-hidden', 'true')
+  svg.innerHTML = ICONS[name] || ''
+  return svg
+}
+
+function toast(message, kind) {
+  var holder = $('toasts')
+  var close = el('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Dismiss' }, icon('x'))
+  var node = el('div', { class: 'toast ' + (kind || 'bad'), role: kind === 'good' ? 'status' : 'alert' },
+    el('div', { class: 'toast-text', text: message }), close)
+  function dismiss() { if (node.parentNode) node.parentNode.removeChild(node) }
+  close.addEventListener('click', dismiss)
+  holder.appendChild(node)
+  while (holder.children.length > 3) holder.removeChild(holder.firstChild)
+  setTimeout(dismiss, kind === 'good' ? 5000 : 8000)
 }
 
 function api(path, body) {
@@ -357,429 +609,761 @@ function api(path, body) {
     body: JSON.stringify(body || {})
   }).then(function (res) {
     return res.json().catch(function () { return {} }).then(function (data) {
-      if (!res.ok) throw new Error(data.error || ('request failed (' + res.status + ')'))
+      if (!res.ok) throw new Error(data.error || ('Something went wrong (' + res.status + ').'))
       return data
     })
+  }, function () {
+    throw new Error('Kindle Export is not responding. Is it still running?')
   })
 }
 
-function pill(kind, text) {
-  return el('span', { class: 'pill ' + kind, text: text })
+function ago(ms) {
+  var s = Math.max(0, Math.round((Date.now() - ms) / 1000))
+  if (s < 45) return 'just now'
+  var m = Math.round(s / 60)
+  if (m < 60) return m + ' min ago'
+  var h = Math.round(m / 60)
+  if (h < 24) return h + (h === 1 ? ' hour ago' : ' hours ago')
+  var d = Math.round(h / 24)
+  return d + (d === 1 ? ' day ago' : ' days ago')
 }
 
-// ------------------------------------------------------------------ render
+function plural(n, one, many) { return n + ' ' + (n === 1 ? one : many) }
+
+function hueFor(text) {
+  var h = 0
+  for (var i = 0; i < text.length; i++) h = (h * 31 + text.charCodeAt(i)) % 360
+  return h
+}
+
+function initials(title) {
+  var words = String(title).split(' ').filter(function (w) {
+    return w && /[A-Za-z0-9\\u00C0-\\uFFFF]/.test(w.charAt(0))
+  })
+  var skip = { the: 1, a: 1, an: 1 }
+  if (words.length > 1 && skip[words[0].toLowerCase()]) words.shift()
+  return words.slice(0, 2).map(function (w) { return w.charAt(0).toUpperCase() }).join('') || '?'
+}
+
+/** Cover URLs are checked on the server too; this is the last line. */
+function safeCover(url) {
+  return typeof url === 'string' && url.indexOf('https://') === 0 ? url : ''
+}
+
+// ------------------------------------------------------------------ model
+
+function diskIndex() {
+  var byAsin = {}
+  state.diskBooks.forEach(function (b) { byAsin[b.asin] = b })
+  return byAsin
+}
+
+function queueIndex() {
+  var byAsin = {}
+  var waiting = 0
+  state.queue.books.forEach(function (entry) {
+    if (entry.status === 'queued') entry.position = ++waiting
+    byAsin[entry.asin] = entry
+  })
+  return byAsin
+}
+
+/**
+ * Every book worth a card: the library in Amazon's order (most recent first),
+ * then books on disk the library doesn't list (an older account, or a
+ * library that hasn't loaded), then anything queued from neither.
+ */
+function allBooks(disk, queue) {
+  var seen = {}
+  var list = []
+  var library = state.library ? state.library.books : []
+  library.forEach(function (b) {
+    seen[b.asin] = true
+    list.push({ asin: b.asin, title: b.title, authors: b.authors || [], coverUrl: b.coverUrl, sample: !!(b.resourceType && b.resourceType.indexOf('SAMPLE') !== -1) })
+  })
+  state.diskBooks.forEach(function (d) {
+    if (seen[d.asin]) return
+    seen[d.asin] = true
+    list.push({ asin: d.asin, title: d.title || d.asin, authors: d.authors || [] })
+  })
+  state.queue.books.forEach(function (q) {
+    if (seen[q.asin]) return
+    seen[q.asin] = true
+    list.push({ asin: q.asin, title: q.title || q.asin, authors: [] })
+  })
+  return list
+}
+
+var ACTIVE = { working: 1, capturing: 1, transcribing: 1, exporting: 1 }
+
+function newestExport(book, format) {
+  var best = null
+  if (!book) return best
+  book.exports.forEach(function (f) {
+    if (f.format === format && (!best || f.mtimeMs > best.mtimeMs)) best = f
+  })
+  return best
+}
+
+/**
+ * What a card shows and offers, from the queue entry (what is happening now)
+ * and the files on disk (what already exists). The queue wins while a book
+ * is waiting or being exported; afterwards the files are the truth.
+ */
+function viewFor(book, disk, entry) {
+  var view = { kind: 'idle', badge: null, label: '', detail: '', progress: undefined, actions: [], cover: null }
+  var md = newestExport(disk, 'md')
+  var pdf = newestExport(disk, 'pdf')
+  var remedy = disk && disk.completeness.remedy
+
+  if (entry && entry.status === 'queued') {
+    view.kind = 'queued'
+    view.badge = { kind: 'busy', icon: 'clock', text: entry.position === 1 ? 'Next' : 'Waiting' }
+    view.label = entry.position === 1 ? 'Up next' : 'Waiting (' + entry.position + ' in line)'
+    view.labelKind = 'busy'
+    view.actions.push({ id: 'remove', text: 'Remove from queue', style: 'quiet' })
+    return view
+  }
+
+  if (entry && ACTIVE[entry.status]) {
+    view.kind = 'working'
+    view.labelKind = 'busy'
+    if (entry.status === 'capturing') {
+      view.label = 'Capturing pages'
+      // Compare the page reached, not screens captured: one page can span
+      // several screens, which read as "page 210 of about 116".
+      if (entry.capturedTotal && entry.capturedPage) {
+        view.detail = 'Page ' + Math.min(entry.capturedPage, entry.capturedTotal) + ' of about ' + entry.capturedTotal
+        view.progress = Math.min(1, entry.capturedPage / entry.capturedTotal)
+      } else {
+        view.detail = entry.captured ? plural(entry.captured, 'page', 'pages') + ' so far' : 'Opening the book…'
+        view.progress = null
+      }
+    } else if (entry.status === 'transcribing') {
+      view.label = 'Reading text'
+      if (entry.transcribedTotal) {
+        view.detail = (entry.transcribed || 0) + ' of ' + entry.transcribedTotal + ' pages'
+        view.progress = Math.min(1, (entry.transcribed || 0) / entry.transcribedTotal)
+      } else {
+        view.progress = null
+      }
+    } else if (entry.status === 'exporting') {
+      view.label = 'Building file'
+      view.progress = null
+    } else {
+      view.label = 'Starting…'
+      view.progress = null
+    }
+    if (state.queue.stopRequested) view.detail = (view.detail ? view.detail + ' · ' : '') + 'last book before stopping'
+    return view
+  }
+
+  if (entry && entry.status === 'failed') {
+    view.kind = 'attention'
+    view.badge = { kind: 'bad', icon: 'alert', text: 'Failed' }
+    view.label = 'Could not export'
+    view.labelKind = 'bad'
+    view.detail = entry.error || ''
+    view.actions.push({ id: 'export', text: 'Try again', style: 'primary' })
+    if (md) view.actions.push({ id: 'download', text: 'Download', file: md.name, iconOnly: true })
+    return view
+  }
+
+  if (remedy) {
+    view.kind = 'attention'
+    view.badge = { kind: 'warn', icon: 'alert', text: 'Needs attention' }
+    view.label = remedy === 'capture-again' ? 'Stopped part-way' : 'Some pages unreadable'
+    view.labelKind = 'warn'
+    view.detail = disk.completeness.summary || ''
+    view.actions.push(remedy === 'capture-again'
+      ? { id: 'recapture', text: 'Capture again', style: 'primary' }
+      : { id: 'export', text: 'Retry missing pages', style: 'primary' })
+    if (md) view.actions.push({ id: 'download', text: 'Download', file: md.name, iconOnly: true })
+    return view
+  }
+
+  if (md || pdf) {
+    view.kind = 'done'
+    view.badge = { kind: 'good', icon: 'check', text: 'Exported' }
+    view.label = 'Exported'
+    view.labelKind = 'good'
+    if (md) view.actions.push({ id: 'download', text: 'Download', file: md.name, style: 'primary' })
+    if (pdf) view.actions.push({ id: 'download', text: md ? 'PDF' : 'Download PDF', file: pdf.name, style: md ? '' : 'primary' })
+    if (!pdf && state.alsoPdf) view.actions.push({ id: 'pdf', text: 'Make PDF' })
+    if (state.platform === 'darwin') view.actions.push({ id: 'reveal', text: 'Show in Finder', iconOnly: true })
+    return view
+  }
+
+  if (disk && disk.completeness.capturedPages) {
+    view.kind = 'partial'
+    view.label = 'Not finished'
+    view.labelKind = 'warn'
+    view.actions.push({ id: 'export', text: 'Finish export', style: 'primary' })
+    view.cover = 'Finish export'
+    return view
+  }
+
+  // Tinted rather than solid: a whole library of solid buttons drowns out
+  // the few cards that need something done.
+  view.actions.push({ id: 'export', text: 'Export', style: 'tint' })
+  view.cover = 'Export'
+  return view
+}
+
+// ---------------------------------------------------------------- actions
+
+function needsKeyFirst() {
+  if (state.needsApiKey && !state.hasApiKey) {
+    toast('Add your OpenAI key first — the box is at the top of the page.')
+    return true
+  }
+  return false
+}
+
+function runAction(action, book, button) {
+  function failed(err) {
+    if (button) button.disabled = false
+    toast(err.message)
+  }
+
+  if (action.id === 'export' || action.id === 'recapture' || action.id === 'pdf') {
+    if (needsKeyFirst()) return
+    var body = { asin: book.asin }
+    if (action.id === 'recapture') body.forceCapture = true
+    if (action.id === 'pdf') body.formats = ['md', 'pdf']
+    if (button) button.disabled = true
+    optimistic(book.asin)
+    api('/api/export', body).catch(function (err) {
+      failed(err)
+      // Undo the optimistic "waiting" with what the server really has.
+      reload()
+    })
+  } else if (action.id === 'remove') {
+    if (button) button.disabled = true
+    api('/api/queue/remove', { asin: book.asin }).catch(failed)
+  } else if (action.id === 'reveal') {
+    api('/api/reveal', { asin: book.asin }).catch(failed)
+  }
+}
+
+/**
+ * Show a clicked book as waiting before the server's answer arrives, so a
+ * click always visibly does something; the next state broadcast replaces it.
+ */
+function optimistic(asin) {
+  var exists = state.queue.books.some(function (q) { return q.asin === asin && (q.status === 'queued' || ACTIVE[q.status]) })
+  if (exists) return
+  state.queue.books = state.queue.books.filter(function (q) { return q.asin !== asin })
+  state.queue.books.push({ asin: asin, title: asin, status: 'queued', warnings: [], outputs: [] })
+  render()
+}
+
+function downloadHref(asin, name) {
+  return '/api/download/' + encodeURIComponent(asin) + '/' + encodeURIComponent(name)
+}
+
+// ----------------------------------------------------------------- render
 
 function render() {
   if (!state) return
-  renderSettings()
-  renderAmazon()
-  renderLibrary()
-  renderJob()
-  renderDone()
+  renderStatus()
+  renderMenu()
+  renderNotices()
+  renderGrid()
+  noticeFinishedBooks()
+  firstRender = false
 }
 
-/**
- * The number a step shows. Settings only exists when a key is needed, and a
- * list that starts at 2 would look like something was skipped.
- */
-function stepNumber(n) {
-  return String(state.needsApiKey ? n : n - 1)
-}
+function renderStatus() {
+  var text
+  var dot = ''
+  var count = state.library ? state.library.books.length : 0
+  var updated = state.library ? ' · updated ' + ago(state.library.fetchedAt) : ''
 
-function renderSettings() {
-  // With local OCR there is nothing to fill in, so the step isn't shown at all
-  // rather than as an optional detail someone might feel they have to finish.
-  $('card-settings').hidden = !state.needsApiKey
-  if (!state.needsApiKey) return
-
-  $('step1').className = 'stepnum' + (state.hasApiKey ? ' done' : '')
-  $('step1').textContent = state.hasApiKey ? '✓' : stepNumber(1)
-
-  var keyPill = $('key-pill')
-  keyPill.textContent = ''
-  keyPill.appendChild(state.hasApiKey
-    ? pill('good', 'key saved')
-    : pill('idle', 'no key yet'))
-
-  // Local OCR plus a key requirement only happens when the server was started
-  // with a model on purpose, so say that instead of implying it's needed.
-  $('settings-hint').textContent = state.localOcr
-    ? 'This app was started with an OpenAI model, so pages are read by '
-      + 'OpenAI rather than on this computer, and that needs a key. It is '
-      + 'stored only on this computer.'
-    : "Reading a book's pages uses OpenAI and costs a little money — usually "
-      + 'well under a dollar for a whole book. Your key is stored only on this '
-      + 'computer.'
-
-  $('api-key').placeholder = state.hasApiKey
-    ? 'saved — paste a new key to replace it'
-    : 'sk-...'
-}
-
-function renderAmazon() {
-  var signedIn = state.amazon === 'signed-in'
-  $('step2').className = 'stepnum' + (signedIn ? ' done' : '')
-  $('step2').textContent = signedIn ? '✓' : stepNumber(2)
-
-  var pillNode
-  if (signedIn) pillNode = pill('good', 'signed in')
-  else if (state.amazon === 'signing-in') pillNode = pill('busy', 'waiting for you…')
-  else if (state.amazon === 'signed-out') pillNode = pill('bad', 'signed out')
-  else pillNode = pill('idle', 'not checked yet')
-
-  var holder = $('amazon-pill')
-  holder.textContent = ''
-  holder.appendChild(pillNode)
-
-  var btn = $('login-btn')
-  btn.disabled = !!state.busy
-  btn.textContent = signedIn ? 'Sign in again' : 'Sign in to Amazon'
-
-  var msg = $('amazon-msg')
   if (state.amazon === 'signing-in') {
-    msg.textContent = 'Finish signing in inside the Chrome window that opened.'
+    text = 'Waiting for you to sign in to Amazon…'
+    dot = 'busy'
+  } else if (state.busy === 'library') {
+    text = state.library ? plural(count, 'book', 'books') + ' · checking for new books…' : 'Loading your library…'
+    dot = 'busy'
   } else if (state.amazon === 'signed-out') {
-    msg.textContent = 'Amazon signed you out — sign in to continue.'
-  } else if (state.amazonError) {
-    msg.textContent = state.amazonError
-  } else {
-    msg.textContent = ''
-  }
-}
-
-function renderLibrary() {
-  var loaded = !!(state.library && state.library.books.length)
-  $('step3').className = 'stepnum' + (loaded ? ' done' : '')
-  $('step3').textContent = loaded ? '✓' : stepNumber(3)
-
-  var btn = $('load-library')
-  btn.disabled = !!state.busy
-  btn.textContent = state.library ? 'Refresh list' : 'Show my books'
-
-  var msg = $('library-msg')
-  if (state.busy === 'library') {
-    msg.textContent = 'Reading your library in a background Chrome window…'
+    text = 'Not signed in to Amazon' + (state.library ? ' · ' + plural(count, 'book', 'books') + updated : '')
+    dot = 'warn'
+  } else if (state.library) {
+    text = (state.amazon === 'signed-in' ? 'Signed in · ' : '') + plural(count, 'book', 'books') + updated
+    dot = state.amazon === 'signed-in' ? 'good' : ''
   } else if (state.libraryError) {
-    msg.textContent = 'Could not load the library: ' + state.libraryError
-  } else if (state.library && !state.library.books.length) {
-    msg.textContent = 'No books found in this Kindle library.'
+    text = 'Library not loaded'
+    dot = 'warn'
   } else {
-    msg.textContent = ''
+    text = 'Starting…'
   }
 
-  if (!loaded) return
-  $('library-area').hidden = false
+  $('status-text').textContent = text
+  $('status-dot').className = 'dot' + (dot ? ' ' + dot : '')
 
-  var byAsin = {}
-  state.diskBooks.forEach(function (b) { byAsin[b.asin] = b })
-
-  var fingerprint = String(state.library.fetchedAt) + '|' + JSON.stringify(state.diskBooks)
-  if (fingerprint !== listFingerprint) {
-    listFingerprint = fingerprint
-    buildBookList(byAsin)
-  }
-
-  updateSelectionBar()
+  var refresh = $('refresh-btn')
+  refresh.disabled = !!state.busy && state.busy !== 'library'
+  refresh.classList.toggle('spinning', state.busy === 'library')
+  refresh.title = state.busy === 'export'
+    ? 'The list can refresh once the export is done'
+    : 'Refresh your library'
 }
 
-function buildBookList(byAsin) {
-  var list = $('booklist')
-  list.textContent = ''
+function renderMenu() {
+  $('pdf-switch').checked = !!state.alsoPdf
+  $('menu-outdir').textContent = state.outDir
+  $('menu-finder').hidden = state.platform !== 'darwin'
+  $('menu-key').hidden = !(state.needsApiKey && state.hasApiKey)
+  var signin = $('menu-signin')
+  signin.disabled = !!state.busy
+  $('menu-signin-text').textContent = state.amazon === 'signed-in' ? 'Sign in to Amazon again' : 'Sign in to Amazon'
 
-  state.library.books.forEach(function (book) {
-    var disk = byAsin[book.asin]
-    var box = el('input', { type: 'checkbox' })
-    box.checked = selected.has(book.asin)
-    box.addEventListener('change', function () {
-      if (box.checked) selected.add(book.asin)
-      else selected.delete(book.asin)
-      updateSelectionBar()
+  var log = $('log')
+  var entries = state.queue.log
+  if (log.getAttribute('data-count') !== String(entries.length) || log.getAttribute('data-last') !== String(entries.length ? entries[entries.length - 1].time : 0)) {
+    log.setAttribute('data-count', String(entries.length))
+    log.setAttribute('data-last', String(entries.length ? entries[entries.length - 1].time : 0))
+    log.textContent = entries.length ? '' : 'Nothing yet.'
+    entries.forEach(function (entry) {
+      log.appendChild(el('div', { class: entry.level === 'warn' ? 'warn' : '', text: entry.message }))
     })
-
-    var meta = el('div', { class: 'meta' },
-      el('div', { class: 'title', text: book.title }),
-      el('div', { class: 'authors', text: (book.authors || []).join(', ') }))
-
-    var row = el('label', { class: 'bookrow', 'data-search': (book.title + ' ' + (book.authors || []).join(' ')).toLowerCase() }, box, meta)
-
-    if (disk && disk.exports.length) {
-      row.appendChild(disk.completeness.complete
-        ? pill('good', 'exported')
-        : pill('warn', disk.completeness.remedy === 'capture-again'
-          ? 'exported, stopped early'
-          : 'exported, missing pages'))
-    } else if (disk && !disk.completeness.complete && disk.completeness.capturedPages) {
-      // Captured but never finished: without this the only sign is a book that
-      // silently exports short every time it is picked.
-      row.appendChild(pill('warn', 'unfinished'))
-    } else if (book.resourceType && book.resourceType.indexOf('SAMPLE') !== -1) {
-      row.appendChild(pill('idle', 'sample'))
-    }
-
-    list.appendChild(row)
-  })
-
-  applySearch()
+    log.scrollTop = log.scrollHeight
+  }
 }
 
-function applySearch() {
+function notice(kind, iconName, title, text, actions) {
+  var body = el('div', { class: 'notice-body' },
+    el('div', { class: 'notice-title', text: title }),
+    text ? el('div', { class: 'notice-text', text: text }) : null)
+  var node = el('div', { class: 'notice ' + kind },
+    el('div', { class: 'notice-icon', 'aria-hidden': 'true' }, icon(iconName)), body)
+  if (actions && actions.length) {
+    var holder = el('div', { class: 'notice-actions' })
+    actions.forEach(function (a) { holder.appendChild(a) })
+    node.appendChild(holder)
+  }
+  return node
+}
+
+var noticeFingerprint = ''
+
+function renderNotices() {
+  var holder = $('notices')
+  var parts = []
+  var q = state.queue
+  var active = q.books.filter(function (b) { return ACTIVE[b.status] })[0]
+  var waiting = q.books.filter(function (b) { return b.status === 'queued' }).length
+  var needsKey = state.needsApiKey && !state.hasApiKey
+
+  if (needsKey) parts.push('key')
+  if (state.amazon === 'signing-in') parts.push('signing-in')
+  else if (state.amazon === 'signed-out' && !state.busy) parts.push('signed-out')
+  else if (state.amazon === 'signed-out') parts.push('signed-out-busy')
+  if (state.amazonError) parts.push('amazon-error:' + state.amazonError)
+  if (state.profileBusy) parts.push('profile-busy')
+  else if (state.libraryError) parts.push('library-error:' + state.libraryError)
+  if (active || waiting) parts.push('queue:' + (active ? active.asin + active.status : '') + ':' + waiting + ':' + q.stopRequested + ':' + state.busy)
+
+  var fingerprint = parts.join('|')
+  if (fingerprint === noticeFingerprint) return
+  noticeFingerprint = fingerprint
+
+  // The key form keeps what was typed across re-renders.
+  var typed = $('key-input') ? $('key-input').value : ''
+  var hadFocus = document.activeElement && document.activeElement.id === 'key-input'
+  holder.textContent = ''
+
+  if (needsKey) {
+    var input = el('input', { type: 'password', id: 'key-input', placeholder: 'sk-…', autocomplete: 'off', 'aria-label': 'OpenAI API key' })
+    input.value = typed
+    var form = el('form', {}, input, el('button', { class: 'btn primary', type: 'submit', text: 'Save key' }))
+    form.addEventListener('submit', function (event) {
+      event.preventDefault()
+      saveKey(input.value, function () { input.value = '' })
+    })
+    var keyNotice = notice('warn', 'key', 'Add your OpenAI key to start',
+      state.localOcr
+        ? 'This app was started with an OpenAI model, so pages are read by OpenAI rather than on this computer. The key is stored only on this computer.'
+        : "Reading a book's pages uses OpenAI and costs a little money — usually well under a dollar a book. The key is stored only on this computer.")
+    keyNotice.appendChild(form)
+    holder.appendChild(keyNotice)
+    if (hadFocus) input.focus()
+  }
+
+  if (state.amazon === 'signing-in') {
+    holder.appendChild(notice('', 'window', 'Sign in to Amazon in the Chrome window',
+      'A Chrome window has opened on Amazon’s sign-in page. Sign in the way you always do — including any code Amazon sends you. The window closes by itself when you’re done. This app never sees your password.'))
+  } else if (state.amazon === 'signed-out') {
+    holder.appendChild(notice('warn', 'user', 'Sign in to Amazon to see your books',
+      'A Chrome window opens on Amazon’s own sign-in page. Your password is never seen or stored by this app.',
+      [el('button', { class: 'btn primary', type: 'button', text: 'Sign in to Amazon', disabled: !!state.busy, onclick: signIn })]))
+  }
+
+  if (state.amazonError) {
+    holder.appendChild(notice('warn', 'alert', 'Could not open the sign-in window', state.amazonError))
+  }
+
+  if (state.profileBusy) {
+    holder.appendChild(notice('warn', 'clock', 'Chrome is busy with another Kindle Export',
+      'Another copy of Kindle Export is using the browser right now. Your library will load as soon as it’s done — it tries again by itself.',
+      [el('button', { class: 'btn', type: 'button', text: 'Try now', onclick: refreshLibrary })]))
+  } else if (state.libraryError) {
+    holder.appendChild(notice('bad', 'alert', 'Could not load your library', state.libraryError,
+      [el('button', { class: 'btn', type: 'button', text: 'Try again', disabled: !!state.busy, onclick: refreshLibrary })]))
+  }
+
+  if (active || waiting) {
+    var title
+    var text
+    if (active) {
+      title = 'Exporting “' + titleOf(active.asin, active.title) + '”'
+      text = active.status === 'capturing' || active.status === 'working'
+        ? 'Chrome is reading the book in a minimized window — no need to touch it. It closes on its own; if Amazon wants you to sign in, it pops up by itself.'
+        : 'Almost there — the pages are captured and are being turned into text.'
+      if (waiting) text += ' ' + plural(waiting, 'more book', 'more books') + ' waiting.'
+    } else {
+      title = plural(waiting, 'book', 'books') + ' waiting'
+      text = state.busy === 'login'
+        ? 'Exporting starts once you have signed in to Amazon.'
+        : state.busy === 'library'
+          ? 'Exporting starts as soon as your library has finished loading.'
+          : 'Starting…'
+    }
+    var stop = null
+    if (active) {
+      stop = el('button', { class: 'btn', type: 'button', text: q.stopRequested ? 'Stopping after this book…' : 'Stop after this book', disabled: q.stopRequested })
+      stop.addEventListener('click', function () {
+        stop.disabled = true
+        api('/api/queue/stop').catch(function (err) { stop.disabled = false; toast(err.message) })
+      })
+    }
+    holder.appendChild(notice('', 'arrow', title, text, stop ? [stop] : []))
+  }
+}
+
+function titleOf(asin, fallback) {
+  var lib = state.library ? state.library.books : []
+  for (var i = 0; i < lib.length; i++) if (lib[i].asin === asin) return lib[i].title
+  return fallback || asin
+}
+
+function renderGrid() {
+  var grid = $('grid')
+  var disk = diskIndex()
+  var queue = queueIndex()
+  var books = allBooks(disk, queue)
   var needle = $('search').value.trim().toLowerCase()
-  var rows = $('booklist').children
-  for (var i = 0; i < rows.length; i++) {
-    var haystack = rows[i].getAttribute('data-search') || ''
-    rows[i].style.display = !needle || haystack.indexOf(needle) !== -1 ? '' : 'none'
+
+  var exportedCount = books.filter(function (b) { return isOnDisk(disk[b.asin]) }).length
+  $('filterbar').hidden = !books.length
+  $('filter-all').setAttribute('aria-pressed', String(filter === 'all'))
+  $('filter-done').setAttribute('aria-pressed', String(filter === 'done'))
+  $('filter-done').textContent = 'Exported' + (exportedCount ? ' (' + exportedCount + ')' : '')
+
+  var shown = books.filter(function (b) {
+    if (filter === 'done' && !isOnDisk(disk[b.asin]) && !queue[b.asin]) return false
+    if (!needle) return true
+    return (b.title + ' ' + b.authors.join(' ')).toLowerCase().indexOf(needle) !== -1
+  })
+
+  $('filtercount').textContent = needle || filter === 'done'
+    ? plural(shown.length, 'book', 'books') + ' shown'
+    : ''
+
+  if (!books.length) {
+    renderEmptyLibrary(grid)
+    return
+  }
+
+  grid.querySelectorAll('.skeleton').forEach(function (n) { n.remove() })
+
+  var visible = {}
+  shown.forEach(function (book, index) {
+    visible[book.asin] = true
+    var card = cards[book.asin] || (cards[book.asin] = createCard(book))
+    updateCard(card, book, viewFor(book, disk[book.asin], queue[book.asin]))
+    if (grid.children[index] !== card.root) grid.insertBefore(card.root, grid.children[index] || null)
+  })
+  Object.keys(cards).forEach(function (asin) {
+    if (!visible[asin] && cards[asin].root.parentNode) cards[asin].root.parentNode.removeChild(cards[asin].root)
+  })
+
+  var empty = $('empty')
+  if (shown.length) {
+    empty.hidden = true
+  } else {
+    empty.hidden = false
+    empty.textContent = ''
+    empty.appendChild(needle
+      ? emptyState('search', 'No books match “' + $('search').value.trim() + '”', 'Try part of the title or the author’s last name.')
+      : emptyState('book', 'Nothing exported yet', 'Click any book in “All books” to export it. It shows up here when it’s done.'))
   }
 }
 
-function updateSelectionBar() {
-  var count = selected.size
-  $('sel-count').textContent = count + ' selected'
-  var busy = !!state.busy
-  var needsKey = state.needsApiKey
-  $('export-btn').disabled = !count || busy || (needsKey && !state.hasApiKey)
-  $('export-btn').textContent = busy && state.busy === 'export'
-    ? 'Exporting…'
-    : 'Export ' + (count || '') + (count === 1 ? ' book' : ' books')
-  if (needsKey && !state.hasApiKey && count) {
-    $('library-msg').textContent = 'Save an OpenAI API key in step 1 first.'
+function isOnDisk(d) {
+  return !!(d && (d.exports.length || d.completeness.capturedPages))
+}
+
+function renderEmptyLibrary(grid) {
+  var empty = $('empty')
+  var loading = state.busy === 'library' || state.busy === 'login' ||
+    (!state.library && state.amazon === 'unknown' && !state.libraryError && !state.amazonError)
+
+  if (loading) {
+    empty.hidden = true
+    if (!grid.querySelector('.skeleton')) {
+      grid.textContent = ''
+      for (var i = 0; i < 12; i++) {
+        grid.appendChild(el('div', { class: 'card skeleton', 'aria-hidden': 'true' },
+          el('div', { class: 'cover' }), el('div', { class: 'line' }), el('div', { class: 'line short' })))
+      }
+    }
+    return
+  }
+
+  grid.textContent = ''
+  empty.hidden = false
+  empty.textContent = ''
+  if (state.amazon === 'signed-out') {
+    empty.appendChild(emptyState('user', 'Your books will appear here', 'Sign in to Amazon above and your Kindle library shows up here. Then click a book to export it.'))
+  } else if (state.library) {
+    empty.appendChild(emptyState('book', 'No books in this Kindle library', 'Books you buy or borrow on Kindle show up here.',
+      el('button', { class: 'btn', type: 'button', text: 'Check again', onclick: refreshLibrary })))
+  } else {
+    empty.appendChild(emptyState('book', 'Your library isn’t loaded yet', '',
+      el('button', { class: 'btn primary', type: 'button', text: 'Load my books', disabled: !!state.busy, onclick: refreshLibrary })))
   }
 }
 
-function renderJob() {
-  var job = state.job
-  $('card-job').hidden = !job
-  if (!job) return
-
-  var running = job.state === 'running'
-  var anyCapturing = job.books.some(function (b) {
-    return b.status === 'capturing' || b.status === 'working'
-  })
-  $('chrome-notice').hidden = !(running && anyCapturing)
-
-  var holder = $('job-books')
-  holder.textContent = ''
-  job.books.forEach(function (book) { holder.appendChild(jobRow(book, job)) })
-
-  var stop = $('stop-btn')
-  stop.hidden = !running
-  stop.disabled = job.stopRequested
-  stop.textContent = job.stopRequested ? 'Stopping after this book…' : 'Stop after current book'
-
-  var msg = $('job-msg')
-  if (job.state === 'done') msg.textContent = 'All done.'
-  else if (job.state === 'stopped') msg.textContent = 'Stopped.'
-  else msg.textContent = ''
-
-  var log = $('job-log')
-  log.textContent = ''
-  job.log.forEach(function (entry) {
-    var line = el('div', { text: entry.message })
-    if (entry.level === 'warn') line.className = 'warn'
-    log.appendChild(line)
-  })
-  if ($('log-details').open) log.scrollTop = log.scrollHeight
+function emptyState(iconName, title, text, action) {
+  return el('div', {},
+    el('div', { class: 'empty-icon', 'aria-hidden': 'true' }, icon(iconName)),
+    el('h2', { text: title }),
+    text ? el('p', { text: text }) : null,
+    action || null)
 }
 
-function jobRow(book, job) {
-  var statusPill
-  var skipped = job.state !== 'running' && book.status === 'queued'
-  if (skipped) statusPill = pill('idle', 'skipped')
-  else if (book.status === 'queued') statusPill = pill('idle', 'waiting')
-  else if (book.status === 'working') statusPill = pill('busy', 'starting…')
-  else if (book.status === 'capturing') statusPill = pill('busy', 'reading pages')
-  else if (book.status === 'transcribing') statusPill = pill('busy', 'turning pages into text')
-  else if (book.status === 'exporting') statusPill = pill('busy', 'writing file')
-  else if (book.status === 'done') statusPill = pill('good', 'done')
-  else if (book.status === 'warning') statusPill = pill('warn', 'done, with warnings')
-  else statusPill = pill('bad', 'failed')
+function createCard(book) {
+  var cover = el('div', { class: 'cover' })
+  var placeholder = el('div', { class: 'placeholder', 'aria-hidden': 'true' },
+    el('div', { class: 'initials', text: initials(book.title) }),
+    el('div', { class: 'ph-title', text: book.title }))
+  placeholder.style.setProperty('--hue', String(hueFor(book.asin + book.title)))
+  cover.appendChild(placeholder)
 
-  var row = el('div', { class: 'jobrow' },
-    el('div', { class: 'toprow' },
-      el('div', { class: 'title', text: book.title }),
-      statusPill))
+  var src = safeCover(book.coverUrl)
+  if (src) {
+    var img = el('img', { alt: '', loading: 'lazy', decoding: 'async', referrerpolicy: 'no-referrer', src: src })
+    img.addEventListener('error', function () { img.remove() })
+    cover.appendChild(img)
+  }
 
-  if (book.status === 'capturing') {
-    var captured = book.captured || 0
-    if (book.capturedTotal) {
-      row.appendChild(bar(captured / book.capturedTotal))
-      row.appendChild(el('div', { class: 'mutedsmall', text: 'page ' + captured + ' of about ' + book.capturedTotal }))
+  var title = el('h3', { class: 'title', text: book.title, title: book.title })
+  var author = el('p', { class: 'author', text: book.authors.join(', ') })
+  var stateLine = el('div', { class: 'state' })
+  var detail = el('div', { class: 'state-detail' })
+  var actions = el('div', { class: 'actions' })
+  var meta = el('div', { class: 'meta' }, title, author, stateLine, detail, actions)
+  var root = el('article', { class: 'card', 'data-asin': book.asin }, cover, meta)
+
+  return {
+    root: root, cover: cover, title: title, author: author, stateLine: stateLine, detail: detail,
+    actions: actions, coverUrl: src, sig: '', badge: null, bar: null, coverBtn: null
+  }
+}
+
+function updateCard(card, book, view) {
+  // The library may have filled in a title or cover the disk scan didn't know.
+  if (card.title.textContent !== book.title) {
+    card.title.textContent = book.title
+    card.title.title = book.title
+  }
+  var authors = book.authors.join(', ')
+  if (card.author.textContent !== authors) card.author.textContent = authors
+  var src = safeCover(book.coverUrl)
+  if (src && src !== card.coverUrl) {
+    card.coverUrl = src
+    var old = card.cover.querySelector('img')
+    if (old) old.remove()
+    var img = el('img', { alt: '', loading: 'lazy', decoding: 'async', referrerpolicy: 'no-referrer', src: src })
+    img.addEventListener('error', function () { img.remove() })
+    card.cover.insertBefore(img, card.cover.children[1] || null)
+  }
+
+  card.root.className = 'card ' + view.kind
+
+  // Progress changes every few seconds; only the bar and text follow it.
+  if (view.progress !== undefined) {
+    if (!card.bar) {
+      card.bar = el('div', { class: 'cover-progress', role: 'progressbar', 'aria-label': 'Export progress' }, el('div', { class: 'fill' }))
+      card.cover.appendChild(card.bar)
+    }
+    card.bar.className = 'cover-progress' + (view.progress === null ? ' indeterminate' : '')
+    card.bar.firstChild.style.width = view.progress === null ? '' : Math.round(view.progress * 100) + '%'
+    if (view.progress === null) card.bar.removeAttribute('aria-valuenow')
+    else card.bar.setAttribute('aria-valuenow', String(Math.round(view.progress * 100)))
+  } else if (card.bar) {
+    card.bar.remove()
+    card.bar = null
+  }
+
+  card.stateLine.className = 'state' + (view.labelKind ? ' ' + view.labelKind : '')
+  var label = view.label || (book.sample ? 'Sample' : '')
+  if (card.stateLine.textContent !== label) card.stateLine.textContent = label
+  card.stateLine.hidden = !label
+  if (card.detail.textContent !== view.detail) card.detail.textContent = view.detail
+  card.detail.hidden = !view.detail
+
+  var sig = JSON.stringify([view.badge, view.actions, view.cover, state.needsApiKey && !state.hasApiKey, state.platform])
+  if (sig === card.sig) return
+  card.sig = sig
+
+  if (card.badge) { card.badge.remove(); card.badge = null }
+  if (view.badge) {
+    card.badge = el('span', { class: 'badge ' + view.badge.kind }, icon(view.badge.icon), view.badge.text)
+    card.cover.appendChild(card.badge)
+  }
+
+  // Rebuilding the buttons would drop keyboard focus; put it back on the
+  // same action if it still exists, or on the card's first button.
+  var focused = document.activeElement
+  var focusAction = focused && card.root.contains(focused) ? focused.getAttribute('data-action') || 'cover' : null
+
+  if (card.coverBtn) { card.coverBtn.remove(); card.coverBtn = null }
+  if (view.cover) {
+    card.coverBtn = el('button', { class: 'cover-action', type: 'button', 'data-action': 'cover', 'aria-label': view.cover + ' “' + book.title + '”' },
+      el('span', {}, icon('download'), view.cover))
+    card.coverBtn.addEventListener('click', function () { runAction({ id: 'export' }, book) })
+    card.cover.appendChild(card.coverBtn)
+  }
+
+  card.actions.textContent = ''
+  view.actions.forEach(function (action) {
+    var node
+    var cls = 'btn' + (action.style ? ' ' + action.style : '') + (action.iconOnly ? ' icon-only' : '')
+    var label = action.iconOnly ? action.text + ' “' + book.title + '”' : null
+    if (action.id === 'download') {
+      node = el('a', { class: cls, href: downloadHref(book.asin, action.file), download: action.file, 'data-action': 'download-' + action.file, 'aria-label': label, title: action.iconOnly ? action.text : null })
+      node.appendChild(action.iconOnly ? icon('download') : document.createTextNode(action.text))
     } else {
-      row.appendChild(bar(null))
-      if (captured) row.appendChild(el('div', { class: 'mutedsmall', text: captured + ' pages so far' }))
+      node = el('button', { class: cls, type: 'button', 'data-action': action.id, 'aria-label': label, title: action.iconOnly ? action.text : null })
+      node.appendChild(action.iconOnly ? icon(action.id === 'reveal' ? 'folder' : 'download') : document.createTextNode(action.text))
+      node.addEventListener('click', function () { runAction(action, book, node) })
     }
-  } else if (book.status === 'transcribing') {
-    if (book.transcribedTotal) {
-      row.appendChild(bar((book.transcribed || 0) / book.transcribedTotal))
-      row.appendChild(el('div', { class: 'mutedsmall', text: (book.transcribed || 0) + ' of ' + book.transcribedTotal + ' pages read' }))
-    } else {
-      row.appendChild(bar(null))
-    }
-  } else if (book.status === 'working' || book.status === 'exporting') {
-    row.appendChild(bar(null))
-  }
-
-  if (book.status === 'done' || book.status === 'warning') {
-    var files = el('div', { class: 'filedone' })
-    book.outputs.forEach(function (name) {
-      if (!/\\.(md|pdf)$/.test(name)) return
-      files.appendChild(el('a', {
-        class: 'filelink',
-        href: '/api/download/' + encodeURIComponent(book.asin) + '/' + encodeURIComponent(name),
-        text: '⬇ ' + name
-      }))
-    })
-    if (files.children.length) row.appendChild(files)
-  }
-
-  book.warnings.slice(0, 3).forEach(function (warning) {
-    row.appendChild(el('div', { class: 'warnnote', text: warning }))
+    card.actions.appendChild(node)
   })
-  if (book.error) {
-    row.appendChild(el('div', { class: 'errnote', text: book.error }))
+
+  if (focusAction) {
+    var target = card.root.querySelector('[data-action="' + focusAction + '"]') || card.root.querySelector('button, a')
+    if (target) target.focus()
   }
-
-  return row
-}
-
-function bar(fraction) {
-  var wrap = el('div', { class: 'progress' + (fraction === null ? ' indeterminate' : '') })
-  var fill = el('div', { class: 'fill' })
-  fill.style.width = fraction === null ? '30%' : Math.round(Math.min(1, fraction) * 100) + '%'
-  wrap.appendChild(fill)
-  return wrap
-}
-
-function renderDone() {
-  // Unfinished books belong here too, even with nothing to download yet: this
-  // is where the button that finishes them lives.
-  var books = state.diskBooks.filter(function (b) {
-    return b.exports.length || (b.completeness.remedy && b.completeness.capturedPages)
-  })
-  $('card-done').hidden = !books.length
-  if (!books.length) return
-
-  $('done-hint').textContent = 'Saved under ' + state.outDir
-
-  var holder = $('done-list')
-  holder.textContent = ''
-  books.forEach(function (book) {
-    var done = book.completeness.complete
-    var row = el('div', { class: 'jobrow' },
-      el('div', { class: 'toprow' },
-        el('div', { class: 'title', text: book.title || book.asin }),
-        done
-          ? pill('good', 'complete')
-          : pill('warn', book.completeness.remedy === 'capture-again'
-            ? 'stopped part-way'
-            : 'missing pages')))
-
-    var files = el('div', { class: 'filedone' })
-    book.exports.forEach(function (file) {
-      files.appendChild(el('a', {
-        class: 'filelink',
-        href: '/api/download/' + encodeURIComponent(book.asin) + '/' + encodeURIComponent(file.name),
-        text: '⬇ ' + file.name
-      }))
-    })
-    if (state.platform === 'darwin' && book.exports.length) {
-      files.appendChild(el('button', {
-        class: 'small',
-        text: 'Show in Finder',
-        onclick: function () {
-          api('/api/reveal', { asin: book.asin }).catch(function (err) { toast(err.message) })
-        }
-      }))
-    }
-    if (book.completeness.remedy) files.appendChild(repairButton(book))
-    if (files.children.length) row.appendChild(files)
-
-    if (book.completeness.summary) {
-      row.appendChild(el('div', { class: 'warnnote', text: book.completeness.summary }))
-    }
-
-    holder.appendChild(row)
-  })
 }
 
 /**
- * The one action that fixes this book.
- *
- * A capture that stopped early has to be taken again from the start — asking
- * for the export a second time just rebuilds the same truncated book. Pages
- * that could not be read are a different matter: those resume page by page, so
- * an ordinary run retries exactly them.
+ * Say so when a book finishes: the card changes quietly, and someone who
+ * walked away for the hour a capture takes should not have to hunt for it.
  */
-function repairButton(book) {
-  var recapture = book.completeness.remedy === 'capture-again'
-  var btn = el('button', {
-    class: 'small',
-    text: recapture ? 'Capture again' : 'Retry unreadable pages'
+function noticeFinishedBooks() {
+  state.queue.books.forEach(function (entry) {
+    var before = lastStatus[entry.asin]
+    lastStatus[entry.asin] = entry.status
+    if (firstRender || !before || before === entry.status) return
+    if (!ACTIVE[before]) return
+    var name = '“' + titleOf(entry.asin, entry.title) + '”'
+    if (entry.status === 'done') toast(name + ' is ready to download.', 'good')
+    else if (entry.status === 'warning') toast(name + ' is exported, but needs attention — see its card.', 'bad')
+    else if (entry.status === 'failed') toast(name + ' could not be exported: ' + (entry.error || 'unknown error'), 'bad')
   })
-  btn.disabled = !!state.busy
-  btn.addEventListener('click', function () {
-    btn.disabled = true
-    api('/api/export', {
-      asins: [book.asin],
-      formats: exportFormatsFor(book),
-      forceCapture: recapture
-    }).catch(function (err) {
-      btn.disabled = false
-      toast(err.message)
-    })
-  })
-
-  return btn
-}
-
-/** Redo the formats this book already has, so nothing it had disappears. */
-function exportFormatsFor(book) {
-  var formats = []
-  book.exports.forEach(function (file) {
-    if (formats.indexOf(file.format) === -1) formats.push(file.format)
-  })
-
-  return formats.length ? formats : ['md']
 }
 
 // ------------------------------------------------------------------ wiring
 
-$('save-settings').addEventListener('click', function () {
-  var body = {}
-  var key = $('api-key').value.trim()
-  if (key) body.apiKey = key
-  $('settings-msg').textContent = 'Saving…'
-  api('/api/config', body).then(function () {
-    $('api-key').value = ''
-    $('settings-msg').textContent = 'Saved.'
-    setTimeout(function () { $('settings-msg').textContent = '' }, 3000)
+function signIn() {
+  api('/api/login').catch(function (err) { toast(err.message) })
+}
+
+function refreshLibrary() {
+  api('/api/library').catch(function (err) { toast(err.message) })
+}
+
+function saveKey(key, done) {
+  key = String(key || '').trim()
+  if (!key) { toast('Paste your OpenAI key first.'); return }
+  api('/api/config', { apiKey: key }).then(function () {
+    if (done) done()
+    toast('Key saved.', 'good')
+  }).catch(function (err) { toast(err.message) })
+}
+
+$('refresh-btn').addEventListener('click', refreshLibrary)
+
+$('search').addEventListener('input', function () { if (state) renderGrid() })
+
+$('filter-all').addEventListener('click', function () { filter = 'all'; renderGrid() })
+$('filter-done').addEventListener('click', function () { filter = 'done'; renderGrid() })
+
+function setMenu(open) {
+  $('menu').hidden = !open
+  $('menu-btn').setAttribute('aria-expanded', String(open))
+}
+
+$('menu-btn').addEventListener('click', function (event) {
+  event.stopPropagation()
+  var open = $('menu').hidden
+  setMenu(open)
+  if (open) $('pdf-switch').focus()
+})
+
+document.addEventListener('click', function (event) {
+  if (!$('menu').hidden && !$('menu').contains(event.target)) setMenu(false)
+})
+
+document.addEventListener('keydown', function (event) {
+  if (event.key === 'Escape') {
+    if (!$('menu').hidden) {
+      setMenu(false)
+      $('menu-btn').focus()
+    } else if (document.activeElement === $('search') && $('search').value) {
+      $('search').value = ''
+      renderGrid()
+    }
+  }
+  // The Mac app's window has no find bar, so Cmd-F goes to the search box.
+  if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'f') {
+    event.preventDefault()
+    $('search').focus()
+    $('search').select()
+  }
+})
+
+$('pdf-switch').addEventListener('change', function () {
+  var on = $('pdf-switch').checked
+  api('/api/config', { alsoPdf: on }).then(function () {
+    toast(on ? 'New exports will include a PDF.' : 'New exports will be Markdown only.', 'good')
   }).catch(function (err) {
-    $('settings-msg').textContent = ''
+    $('pdf-switch').checked = !on
     toast(err.message)
   })
 })
 
-$('login-btn').addEventListener('click', function () {
-  api('/api/login').catch(function (err) { toast(err.message) })
+$('menu-key-form').addEventListener('submit', function (event) {
+  event.preventDefault()
+  saveKey($('menu-key-input').value, function () { $('menu-key-input').value = '' })
 })
 
-$('load-library').addEventListener('click', function () {
-  api('/api/library').catch(function (err) { toast(err.message) })
+$('menu-finder').addEventListener('click', function () {
+  setMenu(false)
+  api('/api/reveal', {}).catch(function (err) { toast(err.message) })
 })
 
-$('search').addEventListener('input', applySearch)
-
-$('export-btn').addEventListener('click', function () {
-  var formats = []
-  if ($('fmt-md').checked) formats.push('md')
-  if ($('fmt-pdf').checked) formats.push('pdf')
-  if (!formats.length) { toast('Pick at least one format.'); return }
-  api('/api/export', { asins: Array.from(selected), formats: formats })
-    .catch(function (err) { toast(err.message) })
+$('menu-signin').addEventListener('click', function () {
+  setMenu(false)
+  signIn()
 })
 
-$('stop-btn').addEventListener('click', function () {
-  api('/api/job/stop').catch(function (err) { toast(err.message) })
-})
+// "Updated 2 min ago" has to keep moving even when nothing else does.
+setInterval(function () { if (state) renderStatus() }, 30000)
 
 var events = new EventSource('/api/events')
 events.onmessage = function (event) {
@@ -787,10 +1371,16 @@ events.onmessage = function (event) {
   render()
 }
 
-fetch('/api/state?scan=1').then(function (res) { return res.json() }).then(function (data) {
-  state = data
-  render()
-})
+function reload(scan) {
+  return fetch('/api/state' + (scan ? '?scan=1' : '')).then(function (res) { return res.json() }).then(function (data) {
+    state = data
+    render()
+  }).catch(function () {
+    toast('Kindle Export is not responding. Is it still running?')
+  })
+}
+
+reload(true)
 </script>
 </body>
 </html>
