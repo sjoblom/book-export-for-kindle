@@ -30,3 +30,7 @@ output/
 __pycache__/
 .DS_Store
 coverage/
+
+# native app
+macos/.build/
+dist-core/

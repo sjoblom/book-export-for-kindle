@@ -1,0 +1,87 @@
+# Native macOS app — plan and contracts
+
+Goal: `Kindle Export.app` without Node and without Chrome, ~5–10 MB. The
+terminal tool (`kindle-export`, Node + patchright) stays as it is and shares the
+same pure logic and the same on-disk formats.
+
+A spike (September 2026) proved the risky part: Kindle Cloud Reader runs in a
+`WKWebView`; page images arrive through a `URL.createObjectURL` user-script
+hook; `/renderer/render` TAR responses (toc.json, location_map.json,
+metadata.json) arrive through a `fetch` hook; page turns work with synthesized
+`NSEvent` key (ArrowRight, keyCode 124) and mouse events sent through
+`window.sendEvent` — including while the window is minimized. Untrusted JS
+`element.click()` on the reader chevrons does **not** work. Sign-in persists in
+`WKWebsiteDataStore.default()`.
+
+## Layout
+
+```
+src/core/               pure TypeScript, no Node APIs — shared by CLI and app
+  index.ts              the KindleCore API below (bundle entry)
+dist-core/kindle-core.js  IIFE bundle, defines globalThis.KindleCore (pnpm build:core)
+macos/
+  Package.swift         SwiftPM: KindleExportKit (library), KindleExport (app), tests
+  Sources/KindleExportKit/
+    Core/               JSCore.swift — runs kindle-core.js in JavaScriptCore
+    Capture/            ReaderSession, CaptureEngine, Tar          (wave 1: capture)
+    Pipeline/           BookStore, VisionOCR, Transcriber, Exporter,
+                        PdfRenderer, LibraryService                (wave 1: pipeline)
+    App/                AppModel (queue/state), Bridge             (wave 2)
+  Sources/KindleExport/ main.swift, windows, menus                 (wave 2)
+  Tests/KindleExportKitTests/
+```
+
+## On-disk formats — unchanged
+
+The app writes exactly what the Node pipeline writes, so each side can finish
+what the other started and outputs can be compared:
+`<outDir>/<ASIN>/metadata.json` (BookMetadata, src/types.ts, key order as
+`normalizeBookMetadata`), `pages/NNN-PPP.png` (1× CSS pixels, i.e. the 2×
+blob downscaled by `deviceScaleFactor` 2), `content.json`
+(`{captureId, chunks}` — ContentStore; chunks carry `lines` from Vision),
+`<slug>.md`, `book.pdf`, and the `.lock/owner-<pid>-<token>.json` book lock
+(src/book-lock.ts semantics: rename a staging dir onto `.lock`).
+
+## KindleCore API (JavaScriptCore contract)
+
+`globalThis.KindleCore` — every function takes and returns JSON-serializable
+values (Swift passes JSON strings through `JSCore.call`). No Node globals, no
+timers, no TextEncoder, no console required (JSC has none of them by default).
+
+| function | signature | source today |
+|---|---|---|
+| `buildBookMetadata` | `({asin, renders: Array<{toc?: string, locationMap?: string, metadata?: string}>, yjMetadata?: object, startReading?: object}) → {meta, info, toc, locationMap, nav} ` — `renders` are the raw file texts from each `/renderer/render` TAR in arrival order; mirrors the network handlers + post-load nav computation in extractBook | extract-kindle-book.ts L420–566, L1117–1162 |
+| `pageForPosition` | `(locationMap, position) → number` | getPageForPosition |
+| `parsePageNav` | `(footerText: string \| null) → PageNav \| null` | playwright-utils.ts |
+| `normalizePageNumber` | `(pageNav \| null, locationMap, fallbackPage) → number` | normalizePageNumberFromNav |
+| `isOnLastNumberedPage`, `maxNavigationAttempts`, `chevronClickTimeoutMs`, `navigationTimeoutMs`, `shouldStopBeforeCapture`, `shouldStopCapture`, `shouldRecover`, `resumeScreenDecision`, `isStall` | as in capture-termination.ts | capture-termination.ts |
+| `pageTextFromLines` | `(lines: OcrLine[], tocLabelToStrip?: string) → string` = shapePageText(reconstructParagraphs(lines)) | ocr-layout.ts, page-text.ts |
+| `tocLabelsForChunks` | `(metadata, chunks: Array<{index, page}>) → Array<string \| null>` (the label to strip per chunk) | page-text.ts createTocLabelResolver |
+| `selectReusableChunks` | `(store \| null, metadata) → ContentChunk[]` | content-store.ts |
+| `bookCompleteness` | `({metadata?, content?, asin?}) → BookCompleteness` | capture-status.ts |
+| `renderMarkdown` | `(metadata, chunks) → {fileName, markdown}` (applies withCurrentText + selectReusableChunks exactly like exportBookMarkdown) | export-book-markdown.ts |
+| `pdfDocument` | `(metadata, chunks) → {title, authors: string[], sections: Array<{label, depth, text}>}` (text as export-book-pdf.ts formats it) | export-book-pdf.ts |
+| `parseLibraryPage` | `(payload) → {books, paginationToken?}` | kindle-library.ts |
+| `normalizeAuthors` | `(string[]) → string[]` | utils.ts |
+
+`JSCore.call(name, args...)` encodes args as JSON, calls
+`KindleCore[name](...JSON.parse(args))`, and decodes the JSON-stringified
+result. Errors thrown in JS surface as Swift errors with the JS message.
+
+## Behaviour to port (Swift) — reference the TS
+
+- Capture: extract-kindle-book.ts `extractBook` — load reader, dismiss "Most
+  Recent Page Read" (answer No), settings (Amazon Ember font, single column) by
+  real mouse clicks, record initial page nav, go to start page via the Go to
+  Page modal (type digits with key events) or walk, the capture loop with the
+  termination and recovery decisions from KindleCore, metadata.json rewritten
+  after every screen, restore the reading position at the end.
+- Transcribe: transcribe-book-content.ts — Vision per page (VNRecognizeText
+  accurate, language correction on), retries, blank pages, failed pages,
+  content.json saved incrementally and atomically, page images removed once
+  every page has text (pipeline.ts).
+- Export: Markdown via `renderMarkdown`; PDF from `pdfDocument` rendered with
+  a WKWebView print operation (paginated) or CoreText.
+- App: serve.ts `App` (queue, states, library cache, auto sign-in once per
+  launch) and serve-page.ts (the UI) talking over a WKScriptMessageHandler
+  bridge instead of HTTP + SSE.
