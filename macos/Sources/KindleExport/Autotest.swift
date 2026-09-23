@@ -86,9 +86,26 @@ enum Autotest {
         }
       }
 
+      // KINDLE_EXPORT_AUTOTEST_CANCEL_AFTER=<seconds> presses Cancel on the
+      // book that long into its export, to check a real capture stops cleanly.
+      let cancelAfter = ProcessInfo.processInfo.environment["KINDLE_EXPORT_AUTOTEST_CANCEL_AFTER"]
+        .flatMap(Double.init)
+      let exportStarted = Date()
+      var cancelledAt: Date?
+
       let exportDeadline = Date().addingTimeInterval(exportTimeout)
       var current: BookJob? { model.books.first { $0.asin == asin } }
       while !(current?.status.isFinished ?? true) || model.busy == .export {
+        if let cancelAfter, cancelledAt == nil,
+          Date().timeIntervalSince(exportStarted) >= cancelAfter
+        {
+          let reply = await model.handle(
+            method: "POST", path: "/api/queue/cancel", body: ["asin": asin])
+          result["cancelReply"] = reply.status
+          result["cancelledDuring"] = current?.status.rawValue ?? "-"
+          cancelledAt = Date()
+          log("autotest: pressed Cancel (\(reply.status))")
+        }
         if backend.signingIn {
           backend.cancelSignIn()
           result["signInAskedMidExport"] = true
@@ -101,6 +118,12 @@ enum Autotest {
       }
 
       guard let job = current else {
+        if let cancelledAt {
+          result["status"] = "cancelled"
+          result["unwindSeconds"] = Date().timeIntervalSince(cancelledAt)
+          result["busyAfter"] = model.busy.map { "\($0)" } ?? "none"
+          return
+        }
         result["status"] = "missing"
         return
       }

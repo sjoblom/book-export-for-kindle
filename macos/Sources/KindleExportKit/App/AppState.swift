@@ -46,6 +46,9 @@ public final class BookJob {
   public var formats: [ExportFormat]
   /// This book is being re-captured from scratch rather than resumed.
   public var forceCapture: Bool
+  /// Cancel was pressed; the export is unwinding. Not part of the page's
+  /// state, which only ever sees the book disappear.
+  public var cancelRequested = false
   /// Milliseconds since 1970, as `Date.now()`.
   public var queuedAt: Double
   public var finishedAt: Double?

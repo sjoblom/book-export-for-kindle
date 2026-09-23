@@ -63,7 +63,10 @@ var READER = {
   reading: 'Chrome is reading the book in a minimized window — no need to touch it. It closes on its own; if Amazon wants you to sign in, it pops up by itself.',
   // The Chrome profile is shared with the terminal tool; signing it out from
   // here would sign the CLI out too, behind its back.
-  canSignOut: false
+  canSignOut: false,
+  // The Node pipeline can't stop a book part-way, so the browser page keeps
+  // "Stop after this book" instead of a per-book Cancel.
+  canCancel: false
 }
 
 function request(method, path, body) {
@@ -119,7 +122,10 @@ var READER = {
   signingIn: null,
   signIn: 'Opens Amazon’s sign-in page in this window.',
   reading: 'Reading the book — this takes a while; you can keep using your Mac.',
-  canSignOut: true
+  canSignOut: true,
+  // The app can stop the book being exported, so each card carries its own
+  // Cancel and there is no queue-wide "stop after this book".
+  canCancel: true
 }
 
 // A reply that never comes (the app busy, or a bug on the Swift side) must
@@ -941,6 +947,7 @@ function viewFor(book, disk, entry) {
       view.progress = null
     }
     if (state.queue.stopRequested) view.detail = (view.detail ? view.detail + ' · ' : '') + 'last book before stopping'
+    if (READER.canCancel) view.actions.push({ id: 'cancel', text: 'Cancel', style: 'quiet' })
     return view
   }
 
@@ -1027,6 +1034,13 @@ function runAction(action, book, button) {
   } else if (action.id === 'remove') {
     if (button) button.disabled = true
     api('/api/queue/remove', { asin: book.asin }).catch(failed)
+  } else if (action.id === 'cancel') {
+    var name = titleOf(book.asin, book.title)
+    if (!window.confirm('Stop exporting “' + name + '”?\\n\\nYou can export it again later — it will start from the beginning.')) return
+    if (button) button.disabled = true
+    api('/api/queue/cancel', { asin: book.asin }).then(function () {
+      toast('Stopped exporting “' + name + '”.')
+    }).catch(failed)
   } else if (action.id === 'reveal') {
     api('/api/reveal', { asin: book.asin }).catch(failed)
   }
@@ -1218,7 +1232,7 @@ function renderNotices() {
           : 'Starting…'
     }
     var stop = null
-    if (active) {
+    if (active && !READER.canCancel) {
       stop = el('button', { class: 'btn', type: 'button', text: q.stopRequested ? 'Stopping after this book…' : 'Stop after this book', disabled: q.stopRequested })
       stop.addEventListener('click', function () {
         stop.disabled = true

@@ -83,7 +83,13 @@ final class FakeBackend: AppBackend {
   ) async throws -> BookResult {
     calls.append(Call(asin: asin, options: options))
     if holdBooks {
-      await withCheckedContinuation { bookWaiters.append($0) }
+      // Like the real pipeline, a held book stops when its task is cancelled.
+      await withTaskCancellationHandler {
+        await withCheckedContinuation { bookWaiters.append($0) }
+      } onCancel: {
+        Task { @MainActor in self.releaseBook() }
+      }
+      try Task.checkCancellation()
     }
     for event in events { emit(event) }
     if let message = failNext {
@@ -642,6 +648,38 @@ final class AppModelTests: XCTestCase {
 
     await assertEqual(post("/api/signout"), 409)
     XCTAssertEqual(backend.signOuts, 0)
+  }
+
+  func testCancelStopsTheBookBeingExportedAndTheNextOneRuns() async throws {
+    try await idle()
+    backend.holdBooks = true
+    _ = await post("/api/export", ["asin": "B00TEST"])
+    _ = await post("/api/export", ["asin": "B00OTHER"])
+    try await until("the first book to start") { backend.calls.count == 1 }
+
+    await assertEqual(post("/api/queue/cancel", ["asin": "B00TEST"]), 200)
+    // The cancelled book leaves the list — no "failed" badge — and the one
+    // waiting behind it starts.
+    try await until("the next book to start") { backend.calls.count == 2 }
+    XCTAssertFalse(model.books.contains { $0.asin == "B00TEST" })
+    XCTAssertEqual(queued(), ["B00OTHER:working"])
+
+    backend.releaseBook()
+    try await idle()
+    XCTAssertEqual(queued(), ["B00OTHER:done"])
+  }
+
+  func testCancelOnlyAppliesToTheBookBeingExported() async throws {
+    try await idle()
+    backend.holdBooks = true
+    _ = await post("/api/export", ["asin": "B00TEST"])
+    _ = await post("/api/export", ["asin": "B00OTHER"])
+    try await until("the first book to start") { backend.calls.count == 1 }
+
+    // A waiting book is removed, not cancelled.
+    await assertEqual(post("/api/queue/cancel", ["asin": "B00OTHER"]), 404)
+    await assertEqual(post("/api/queue/cancel", ["asin": "bad asin"]), 400)
+    backend.releaseAll()
   }
 
   // MARK: - start-up, library and sign-in

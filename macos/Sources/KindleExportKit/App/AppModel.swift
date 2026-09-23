@@ -37,6 +37,8 @@ public final class AppModel {
   public private(set) var books: [BookJob] = []
   /// Stop was pressed; the book being exported is the last one.
   public private(set) var stopRequested = false
+  /// The book being exported and the task running it, for Cancel.
+  private var currentExport: (book: BookJob, task: Task<BookResult, Error>)?
   public private(set) var log: [QueueLogEntry] = []
 
   /// Amazon's sign-in page comes up by itself at most once per launch. A
@@ -191,6 +193,10 @@ public final class AppModel {
 
       case "POST /api/queue/remove":
         try removeFromQueue(try parseBody(body))
+        return AppResponse(200, uiState)
+
+      case "POST /api/queue/cancel":
+        try cancelExport(try parseBody(body))
         return AppResponse(200, uiState)
 
       case "POST /api/queue/stop":
@@ -481,9 +487,25 @@ public final class AppModel {
       throw AppHTTPError(404, "that book is not waiting to export")
     }
     if book.status != .queued {
-      throw AppHTTPError(409, "that book is already being exported — use Stop to end after it")
+      throw AppHTTPError(409, "that book is already being exported — use Cancel to stop it")
     }
     books.removeAll { $0 === book }
+    broadcast()
+  }
+
+  /// Stop the book being exported, now. Its pipeline task is cancelled — the
+  /// capture stops at the next screen, reading at the next page — and the
+  /// book leaves the list once it has unwound, as if never clicked; whatever
+  /// it left on disk shows on its card as usual. Books waiting behind it
+  /// carry on.
+  private func cancelExport(_ body: Any) throws {
+    let asin = try Self.parseAsin((body as? [String: Any])?["asin"])
+    guard let current = currentExport, current.book.asin == asin else {
+      throw AppHTTPError(404, "that book is not being exported")
+    }
+    current.book.cancelRequested = true
+    current.task.cancel()
+    queueLog(.info, asin, "cancelling")
     broadcast()
   }
 
@@ -551,15 +573,32 @@ public final class AppModel {
       forceCapture: book.forceCapture, forceOcr: false,
       concurrency: stored.concurrency ?? VisionOCR.defaultConcurrency)
 
-    do {
-      let result = try await backend.processBook(asin: book.asin, options: options) {
-        [weak self, book] event in
+    // A task of its own, so Cancel can stop this book without touching the
+    // queue runner.
+    let backend = backend
+    let task = Task { @MainActor [weak self, book] in
+      try await backend.processBook(asin: book.asin, options: options) { event in
         self?.onBookEvent(book, event)
       }
+    }
+    currentExport = (book, task)
+    defer { currentExport = nil }
+
+    do {
+      let result = try await task.value
       book.outputs = result.outputs.map(\.lastPathComponent)
       // The same verdict the CLI's exit status uses.
       book.status = result.fellShort(options.command) ? .warning : .done
     } catch {
+      if book.cancelRequested {
+        // Cancelled on purpose: no "failed" badge, the book simply leaves the
+        // list, and its card shows what is on disk.
+        books.removeAll { $0 === book }
+        queueLog(.info, book.asin, "export cancelled")
+        await refreshDiskBooks()
+        broadcast()
+        return
+      }
       book.status = .failed
       book.error = describeError(error)
       queueLog(.warn, book.asin, "failed: \(book.error ?? "")")
