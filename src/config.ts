@@ -17,7 +17,6 @@ import { isPositiveInteger } from './utils'
 
 export interface UserConfig {
   openaiApiKey?: string
-  model?: string
   outDir?: string
   concurrency?: number
 }
@@ -36,7 +35,13 @@ export async function loadConfig(): Promise<UserConfig> {
     const parsed = JSON.parse(raw)
     if (!parsed || typeof parsed !== 'object') return {}
 
-    const config = parsed as UserConfig
+    const config = parsed as UserConfig & { model?: unknown }
+    // Older versions of `setup` stored a model, prefilled with an OpenAI one,
+    // so honouring it would quietly send every page to a paid API on a Mac
+    // that reads them for free. Choosing OpenAI is now a per-run decision
+    // (`--model` or OCR_MODEL); dropping the key here also means the next
+    // save writes the file without it.
+    delete config.model
     // The file is hand-editable, and a bad concurrency only blows up in p-map
     // once transcription starts — after the capture, which can take an hour.
     // Dropping it falls back to the default instead of failing that late.

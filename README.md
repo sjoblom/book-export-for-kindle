@@ -24,21 +24,23 @@ know the ASIN, pass it directly: `kindle-export B01H4G2J1U`.
 the whole flow — made so that someone who never touches a terminal can use
 this after a one-time install:
 
-1. **Settings** — nothing to fill in on macOS, which reads pages itself. An
-   OpenAI key is only needed if you name a model instead; it's stored in
-   `~/.kindle-export/config.json`, readable only by you.
-2. **Sign in to Amazon** — a Chrome window opens on Amazon's own sign-in page.
+1. **Sign in to Amazon** — a Chrome window opens on Amazon's own sign-in page.
    Password and 2FA happen there, exactly as they would anywhere; the window
    closes itself when the sign-in is confirmed. The app never sees the
    password.
-3. **Pick books** — your Kindle library with search, checkboxes, and badges on
+2. **Pick books** — your Kindle library with search, checkboxes, and badges on
    books that were already exported.
-4. **Export** — live progress per book. Capture happens in a minimized Chrome
+3. **Export** — live progress per book. Capture happens in a minimized Chrome
    window that turns the pages by itself, and pops back up only if Amazon
    wants a sign-in. Books that finish with unreadable pages are labelled
    honestly instead of pretending success.
-5. **Download** — every finished book is listed with download buttons (and
+4. **Download** — every finished book is listed with download buttons (and
    "Show in Finder" on macOS), including books exported in earlier runs.
+
+On macOS that is the whole list: pages are read on the Mac itself, so there is
+no key to enter and no model to choose. Off macOS (or without the Xcode tools
+that build local OCR), a **Settings** step comes first and asks for an OpenAI
+API key, stored in `~/.kindle-export/config.json` and readable only by you.
 
 The server binds `127.0.0.1` only — nothing is reachable from the network —
 and rejects requests whose `Host` or headers don't come from its own page.
@@ -108,8 +110,9 @@ npm link          # optional: puts `kindle-export` on your PATH
 
 Without `npm link`, run it as `pnpm kindle-export <args>`.
 
-There is nothing you have to configure on macOS. `kindle-export setup` stores
-defaults — output directory, and an OpenAI key if you want one — in
+There is nothing you have to configure on macOS. `kindle-export setup` asks
+where books should go and offers to sign in to Amazon; off macOS it also asks
+for the OpenAI key that reading pages needs there. Both are stored in
 `~/.kindle-export/config.json`:
 
 ```bash
@@ -137,10 +140,10 @@ Apple's Vision framework, your Amazon session stays in a local browser profile,
 and the text and images stay in `out/`. The only network traffic is with Amazon
 itself, to read the book you already own.
 
-Passing `--model` (or running off macOS) sends every page image to OpenAI to be
-transcribed instead. That costs roughly one vision-model call per page — a few
-tens of cents for a 300-page book on `gpt-4.1-mini` — and both the model and
-the concurrency are configurable.
+Passing `--model` or setting `OCR_MODEL` (or running off macOS) sends every
+page image to OpenAI to be transcribed instead. That costs roughly one
+vision-model call per page — a few tens of cents for a 300-page book on
+`gpt-4.1-mini`, the model used off macOS unless you name another.
 
 ### Platform support
 
@@ -170,8 +173,11 @@ Useful options: `--format md,pdf`, `--json` and `--limit` for `list`,
 `--concurrency`, `--otp` and `--force`. Run `kindle-export --help` for the
 full list.
 
-`--model` switches transcription from local OCR to an OpenAI model, which needs
-an API key. Leave it unset on macOS to read pages for free.
+`--model <name>` (or `OCR_MODEL` in the environment or `.env`) switches
+transcription from local OCR to an OpenAI model, which needs an API key. It is
+deliberately a per-run choice rather than a stored setting, so a Mac never
+starts paying for what it can read for free; `kindle-export serve --model ...`
+applies it to the web app too. Leave it unset on macOS.
 
 `list` reads the same internal JSON endpoint the Kindle library page uses, so
 it sees everything in your account and pages through it. Piping `--json`

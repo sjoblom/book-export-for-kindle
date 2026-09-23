@@ -16,7 +16,6 @@ import {
   type LibraryBook,
   NotSignedInError
 } from './kindle-library'
-import { DEFAULT_OCR_MODEL } from './openai-ocr'
 import {
   bookFellShort,
   type Options,
@@ -93,13 +92,14 @@ interface AppState {
   platform: NodeJS.Platform
   outDir: string
   hasApiKey: boolean
-  /**
-   * Pages can be read on this machine for free, so no API key is needed. The
-   * whole Settings step collapses to an optional detail when this is true.
-   */
+  /** Pages can be read on this machine for free, without an API key. */
   localOcr: boolean
-  model?: string
-  defaultModel: string
+  /**
+   * Whether reading pages needs an OpenAI key: always without local OCR, and
+   * with it only when `serve` was started with a model. The Settings step is
+   * shown only when this is true, so the common case never sees it.
+   */
+  needsApiKey: boolean
   amazon: AmazonState
   busy: Busy
   library?: { books: LibraryBook[]; fetchedAt: number }
@@ -277,7 +277,6 @@ class App {
   private amazonError?: string
   private diskBooks: BookStatus[] = []
   private job?: JobState
-  private model?: string
   private localOcr = false
 
   private readonly sseClients = new Set<http.ServerResponse>()
@@ -285,7 +284,6 @@ class App {
 
   constructor(options: Options) {
     this.options = options
-    this.model = options.model
   }
 
   async init(): Promise<void> {
@@ -296,9 +294,13 @@ class App {
   /**
    * Naming a model means OpenAI reads the pages, which needs a key. Otherwise
    * local OCR covers it, and the key is beside the point.
+   *
+   * The model can only come from the `serve` command line or OCR_MODEL, never
+   * from the page: switching to a paid API is a power-user decision, not a
+   * setting someone should be able to flip by accident.
    */
   private needsApiKey(): boolean {
-    return !this.localOcr || !!this.model
+    return !this.localOcr || !!this.options.model
   }
 
   // ---------------------------------------------------------------- state
@@ -309,8 +311,7 @@ class App {
       outDir: path.resolve(this.options.outDir),
       hasApiKey: !!getEnv('OPENAI_API_KEY'),
       localOcr: this.localOcr,
-      model: this.model,
-      defaultModel: DEFAULT_OCR_MODEL,
+      needsApiKey: this.needsApiKey(),
       amazon: this.amazon,
       busy: this.busy,
       library: this.library,
@@ -519,15 +520,15 @@ class App {
   // ------------------------------------------------------------- handlers
 
   private async handleConfig(body: any): Promise<void> {
+    // Only the key is accepted. A `model` from an older page is ignored on
+    // purpose: see needsApiKey for why the page can't choose one.
     const apiKey =
       typeof body.apiKey === 'string' ? body.apiKey.trim() : undefined
-    const model = typeof body.model === 'string' ? body.model.trim() : undefined
 
     const stored = await loadConfig()
     await saveConfig({
       ...stored,
-      openaiApiKey: apiKey || stored.openaiApiKey,
-      model: model === undefined ? stored.model : model || undefined
+      openaiApiKey: apiKey || stored.openaiApiKey
     })
 
     // The transcriber reads the key from the environment at run time, so a
@@ -536,8 +537,6 @@ class App {
       // eslint-disable-next-line no-process-env
       process.env.OPENAI_API_KEY = apiKey
     }
-    if (model !== undefined) this.model = model || undefined
-
     this.broadcast()
   }
 
@@ -679,7 +678,6 @@ class App {
       command: 'all',
       asins: job.books.map((book) => book.asin),
       formats,
-      model: this.model ?? stored.model,
       concurrency: this.options.concurrency ?? stored.concurrency,
       // A re-capture throws the pages away and reads the book from the start,
       // which is the only way out of a capture that stopped early. It also

@@ -240,22 +240,13 @@ summary { cursor: pointer; color: var(--muted); font-size: 13px; }
     <p class="tagline">Turn Kindle books you own into files on this computer.</p>
   </header>
 
-  <section class="card" id="card-settings">
+  <section class="card" id="card-settings" hidden>
     <h2><span class="stepnum" id="step1">1</span>Settings <span id="key-pill"></span></h2>
     <p class="hint" id="settings-hint">Reading a book's pages uses OpenAI and costs a little money —
     usually well under a dollar for a whole book. Your key is stored only on
     this computer.</p>
     <label class="field"><span>OpenAI API key</span>
       <input type="password" id="api-key" placeholder="sk-..." autocomplete="off">
-    </label>
-    <label class="field"><span>Model that reads the pages <span class="mutedsmall">(optional)</span></span>
-      <input type="text" id="model" list="model-options" placeholder="gpt-4.1-mini" autocomplete="off">
-      <datalist id="model-options">
-        <option value="gpt-4.1-mini"></option>
-        <option value="gpt-4.1"></option>
-        <option value="gpt-4o-mini"></option>
-        <option value="gpt-5-mini"></option>
-      </datalist>
     </label>
     <div class="row">
       <button class="primary" id="save-settings">Save settings</button>
@@ -264,7 +255,7 @@ summary { cursor: pointer; color: var(--muted); font-size: 13px; }
   </section>
 
   <section class="card" id="card-amazon">
-    <h2><span class="stepnum" id="step2">2</span>Amazon <span id="amazon-pill"></span></h2>
+    <h2><span class="stepnum" id="step2">1</span>Amazon <span id="amazon-pill"></span></h2>
     <p class="hint">A Chrome window opens on Amazon's sign-in page. Sign in the
     way you always do — password, any code Amazon sends you — and the window
     closes by itself. Your password is never seen or stored by this app.</p>
@@ -275,7 +266,7 @@ summary { cursor: pointer; color: var(--muted); font-size: 13px; }
   </section>
 
   <section class="card" id="card-books">
-    <h2><span class="stepnum" id="step3">3</span>Your books</h2>
+    <h2><span class="stepnum" id="step3">2</span>Your books</h2>
     <p class="hint">Pick the books to export. Books you already exported are
     marked, and can be downloaded again below without redoing anything.</p>
     <div class="row">
@@ -333,7 +324,6 @@ summary { cursor: pointer; color: var(--muted); font-size: 13px; }
 var state = null
 var selected = new Set()
 var listFingerprint = ''
-var modelTouched = false
 
 function $(id) { return document.getElementById(id) }
 
@@ -388,50 +378,48 @@ function render() {
   renderDone()
 }
 
+/**
+ * The number a step shows. Settings only exists when a key is needed, and a
+ * list that starts at 2 would look like something was skipped.
+ */
+function stepNumber(n) {
+  return String(state.needsApiKey ? n : n - 1)
+}
+
 function renderSettings() {
-  // With local OCR there is nothing to fill in, so the step is complete from
-  // the start and reads as an optional detail rather than a barrier.
-  var settled = state.localOcr || state.hasApiKey
-  $('step1').className = 'stepnum' + (settled ? ' done' : '')
-  $('step1').textContent = settled ? '✓' : '1'
+  // With local OCR there is nothing to fill in, so the step isn't shown at all
+  // rather than as an optional detail someone might feel they have to finish.
+  $('card-settings').hidden = !state.needsApiKey
+  if (!state.needsApiKey) return
+
+  $('step1').className = 'stepnum' + (state.hasApiKey ? ' done' : '')
+  $('step1').textContent = state.hasApiKey ? '✓' : stepNumber(1)
 
   var keyPill = $('key-pill')
   keyPill.textContent = ''
-  keyPill.appendChild(state.localOcr
-    ? pill('good', 'reads pages on this Mac')
-    : state.hasApiKey
-      ? pill('good', 'key saved')
-      : pill('idle', 'no key yet'))
+  keyPill.appendChild(state.hasApiKey
+    ? pill('good', 'key saved')
+    : pill('idle', 'no key yet'))
 
+  // Local OCR plus a key requirement only happens when the server was started
+  // with a model on purpose, so say that instead of implying it's needed.
   $('settings-hint').textContent = state.localOcr
-    ? 'Pages are read on this computer, free and offline — nothing to set up '
-      + 'and nothing to pay for. An OpenAI key is only needed if you name a '
-      + 'model below to read them instead.'
+    ? 'This app was started with an OpenAI model, so pages are read by '
+      + 'OpenAI rather than on this computer, and that needs a key. It is '
+      + 'stored only on this computer.'
     : "Reading a book's pages uses OpenAI and costs a little money — usually "
       + 'well under a dollar for a whole book. Your key is stored only on this '
       + 'computer.'
 
   $('api-key').placeholder = state.hasApiKey
     ? 'saved — paste a new key to replace it'
-    : state.localOcr
-      ? 'not needed — sk-... to use OpenAI instead'
-      : 'sk-...'
-
-  var model = $('model')
-  if (!modelTouched && document.activeElement !== model) {
-    model.value = state.model || ''
-    // Blank means local OCR where that exists, so say so rather than showing a
-    // model name that isn't what will actually run.
-    model.placeholder = state.localOcr
-      ? 'this Mac (leave blank)'
-      : state.defaultModel
-  }
+    : 'sk-...'
 }
 
 function renderAmazon() {
   var signedIn = state.amazon === 'signed-in'
   $('step2').className = 'stepnum' + (signedIn ? ' done' : '')
-  $('step2').textContent = signedIn ? '✓' : '2'
+  $('step2').textContent = signedIn ? '✓' : stepNumber(2)
 
   var pillNode
   if (signedIn) pillNode = pill('good', 'signed in')
@@ -462,7 +450,7 @@ function renderAmazon() {
 function renderLibrary() {
   var loaded = !!(state.library && state.library.books.length)
   $('step3').className = 'stepnum' + (loaded ? ' done' : '')
-  $('step3').textContent = loaded ? '✓' : '3'
+  $('step3').textContent = loaded ? '✓' : stepNumber(3)
 
   var btn = $('load-library')
   btn.disabled = !!state.busy
@@ -547,9 +535,7 @@ function updateSelectionBar() {
   var count = selected.size
   $('sel-count').textContent = count + ' selected'
   var busy = !!state.busy
-  // A named model means OpenAI reads the pages, so it needs a key even when
-  // this machine could have done it locally.
-  var needsKey = !state.localOcr || !!state.model
+  var needsKey = state.needsApiKey
   $('export-btn').disabled = !count || busy || (needsKey && !state.hasApiKey)
   $('export-btn').textContent = busy && state.busy === 'export'
     ? 'Exporting…'
@@ -758,13 +744,12 @@ function exportFormatsFor(book) {
 // ------------------------------------------------------------------ wiring
 
 $('save-settings').addEventListener('click', function () {
-  var body = { model: $('model').value }
+  var body = {}
   var key = $('api-key').value.trim()
   if (key) body.apiKey = key
   $('settings-msg').textContent = 'Saving…'
   api('/api/config', body).then(function () {
     $('api-key').value = ''
-    modelTouched = false
     $('settings-msg').textContent = 'Saved.'
     setTimeout(function () { $('settings-msg').textContent = '' }, 3000)
   }).catch(function (err) {
@@ -772,7 +757,6 @@ $('save-settings').addEventListener('click', function () {
     toast(err.message)
   })
 })
-$('model').addEventListener('input', function () { modelTouched = true })
 
 $('login-btn').addEventListener('click', function () {
   api('/api/login').catch(function (err) { toast(err.message) })

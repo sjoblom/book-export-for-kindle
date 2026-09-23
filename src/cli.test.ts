@@ -13,12 +13,41 @@ type ActualConfig = typeof ConfigModule
 // on the machine they run on, and applyConfig copies a stored key into the
 // environment.
 let stored: UserConfig = {}
+let saved: UserConfig | undefined
 vi.mock('./config', () => ({
   loadConfig: async () => stored,
-  saveConfig: async () => '/dev/null'
+  saveConfig: async (config: UserConfig) => {
+    saved = config
+    return '/dev/null'
+  }
 }))
 
-const { applyConfig, parseArgs } = await import('./cli')
+// `setup` asks its questions through these; each test scripts the answers and
+// records which questions were asked at all.
+const prompts = vi.hoisted(() => ({
+  asked: [] as string[],
+  localOcr: true
+}))
+vi.mock('@inquirer/prompts', () => ({
+  password: async ({ message }: { message: string }) => {
+    prompts.asked.push(`password: ${message}`)
+    return 'sk-typed'
+  },
+  input: async ({ message, default: fallback }: any) => {
+    prompts.asked.push(`input: ${message}`)
+    return fallback ?? ''
+  },
+  confirm: async ({ message }: { message: string }) => {
+    prompts.asked.push(`confirm: ${message}`)
+    return false
+  },
+  checkbox: async () => []
+}))
+vi.mock('./vision-ocr', () => ({
+  isVisionOcrAvailable: async () => prompts.localOcr
+}))
+
+const { applyConfig, parseArgs, setup } = await import('./cli')
 
 const EMPTY: Parameters<typeof applyConfig>[0] = {
   command: 'all',
@@ -35,6 +64,9 @@ const EMPTY: Parameters<typeof applyConfig>[0] = {
 
 beforeEach(() => {
   stored = {}
+  saved = undefined
+  prompts.asked = []
+  prompts.localOcr = true
   vi.spyOn(console, 'log').mockImplementation(() => {})
 })
 
@@ -163,6 +195,80 @@ describe('applyConfig', () => {
     expect(options.outDir).toBe('from-flag')
     expect(options.profileDir).toBe('/tmp/profile')
   })
+
+  it('never takes the OCR model from stored config', async () => {
+    // Older setups prefilled gpt-4.1-mini, which would silently send every
+    // page to a paid API on a Mac that reads them for free.
+    stored = { model: 'gpt-4.1-mini' } as UserConfig
+    vi.stubEnv('OCR_MODEL', undefined)
+
+    expect((await applyConfig({ ...EMPTY })).model).toBeUndefined()
+  })
+
+  it('takes the OCR model from OCR_MODEL or --model', async () => {
+    vi.stubEnv('OCR_MODEL', 'gpt-from-env')
+    expect((await applyConfig({ ...EMPTY })).model).toBe('gpt-from-env')
+
+    const options = await applyConfig({ ...EMPTY, model: 'gpt-from-flag' })
+    expect(options.model).toBe('gpt-from-flag')
+    expect(parseArgs(['--model', 'gpt-5-mini'])?.model).toBe('gpt-5-mini')
+  })
+
+  it('treats an empty OCR_MODEL as not set', async () => {
+    // A blank `OCR_MODEL=` line in .env must mean local OCR, not a model
+    // called "" — and must not hide a real flag either.
+    vi.stubEnv('OCR_MODEL', '')
+    expect((await applyConfig({ ...EMPTY })).model).toBeUndefined()
+
+    vi.stubEnv('OCR_MODEL', '  ')
+    expect((await applyConfig({ ...EMPTY })).model).toBeUndefined()
+
+    vi.stubEnv('OCR_MODEL', '')
+    const options = await applyConfig({ ...EMPTY, model: 'gpt-from-flag' })
+    expect(options.model).toBe('gpt-from-flag')
+  })
+
+  it('refuses an empty --model', () => {
+    expect(() => parseArgs(['--model', ''])).toThrow(/requires a value/)
+  })
+})
+
+describe('setup', () => {
+  it('asks only for the output folder and sign-in when this Mac reads pages', async () => {
+    prompts.localOcr = true
+
+    await setup()
+
+    expect(prompts.asked).toEqual([
+      'input: Where should books be written?',
+      'confirm: Sign in to Amazon now?'
+    ])
+    expect(saved).toEqual({ outDir: 'out' })
+  })
+
+  it('asks for an API key, but no model, without local OCR', async () => {
+    prompts.localOcr = false
+
+    await setup()
+
+    expect(prompts.asked).toEqual([
+      'password: OpenAI API key:',
+      'input: Where should books be written?',
+      'confirm: Sign in to Amazon now?'
+    ])
+    expect(saved).toEqual({ openaiApiKey: 'sk-typed', outDir: 'out' })
+  })
+
+  it('keeps a stored key and never writes a model', async () => {
+    // loadConfig already strips a legacy model; this pins down that setup
+    // itself adds none, whichever branch it takes.
+    stored = { openaiApiKey: 'sk-old', outDir: 'books' }
+
+    await setup()
+
+    expect(saved).toEqual({ openaiApiKey: 'sk-old', outDir: 'books' })
+    expect(saved).not.toHaveProperty('model')
+  })
 })
 
 const actualConfig = await vi.importActual<ActualConfig>('./config')
@@ -188,10 +294,17 @@ describe('loadConfig', () => {
 
   it('drops a stored concurrency that p-map would reject', async () => {
     for (const concurrency of ['8', 0, -1, 2.5, null]) {
-      expect(await loadStored({ concurrency, model: 'm' })).toEqual({
-        model: 'm'
+      expect(await loadStored({ concurrency, outDir: 'o' })).toEqual({
+        outDir: 'o'
       })
     }
+  })
+
+  it('drops a model stored by an older setup', async () => {
+    // Otherwise a save that spreads the loaded config would write it back.
+    expect(await loadStored({ model: 'gpt-4.1-mini', outDir: 'o' })).toEqual({
+      outDir: 'o'
+    })
   })
 
   it('keeps a valid stored concurrency', async () => {

@@ -40,7 +40,8 @@ vi.mock('./pipeline', async (importOriginal) => {
         asin,
         command: options.command,
         forceCapture: options.forceCapture,
-        formats: options.formats
+        formats: options.formats,
+        model: options.model
       })
 
       if (gate.hold) {
@@ -201,14 +202,54 @@ describe('serve', () => {
     expect(state.localOcr).toBe(localOcr)
   })
 
-  it('refuses to export without an API key when a model is named', async () => {
+  it('refuses to export without an API key when started with a model', async () => {
     // Naming a model means OpenAI reads the pages, so a key is required even
     // where local OCR would otherwise have covered it.
-    expect((await post('/api/config', { model: 'gpt-test' })).status).toBe(200)
+    const withModel = await createServeHandle({
+      ...EMPTY_OPTIONS,
+      command: 'serve',
+      outDir,
+      profileDir: path.join(outDir, '.profile'),
+      port: 0,
+      model: 'gpt-test'
+    })
 
-    const res = await post('/api/export', { asins: ['B00TEST'] })
-    expect(res.status).toBe(400)
-    expect(((await res.json()) as any).error).toMatch(/API key/)
+    try {
+      const state = (await (
+        await fetch(withModel.url + '/api/state')
+      ).json()) as any
+      expect(state.needsApiKey).toBe(true)
+
+      const res = await fetch(withModel.url + '/api/export', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-kindle-export': '1' },
+        body: JSON.stringify({ asins: ['B00TEST'] })
+      })
+      expect(res.status).toBe(400)
+      expect(((await res.json()) as any).error).toMatch(/API key/)
+
+      // With a key, the job reads pages with the model `serve` was given.
+      vi.stubEnv('OPENAI_API_KEY', 'sk-test')
+      const started = await fetch(withModel.url + '/api/export', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-kindle-export': '1' },
+        body: JSON.stringify({ asins: ['B00TEST'] })
+      })
+      expect(started.status).toBe(202)
+      await until(() => pipelineCalls.length === 1, 'the book to be processed')
+      expect(pipelineCalls[0]!.model).toBe('gpt-test')
+    } finally {
+      await withModel.close()
+    }
+  })
+
+  it('needs a key exactly when this machine cannot read pages', async () => {
+    const state = (await (await fetch(handle.url + '/api/state')).json()) as any
+    expect(state.needsApiKey).toBe(!localOcr)
+    // Choosing a model is not something the page can do, so it isn't told
+    // about one either.
+    expect(state).not.toHaveProperty('model')
+    expect(state).not.toHaveProperty('defaultModel')
   })
 
   it.skipIf(localOcr)(
@@ -230,24 +271,32 @@ describe('serve', () => {
   })
 
   it('saves settings and makes the key usable without a restart', async () => {
-    const res = await post('/api/config', {
-      apiKey: 'sk-new',
-      model: 'gpt-test'
-    })
+    const res = await post('/api/config', { apiKey: 'sk-new' })
     expect(res.status).toBe(200)
 
-    expect(stored).toMatchObject({ openaiApiKey: 'sk-new', model: 'gpt-test' })
+    expect(stored).toEqual({ openaiApiKey: 'sk-new' })
     const state = (await (await fetch(handle.url + '/api/state')).json()) as any
     expect(state.hasApiKey).toBe(true)
-    expect(state.model).toBe('gpt-test')
+  })
+
+  it('ignores a model sent to the settings endpoint', async () => {
+    // An older page, or anything else posting here, must not be able to
+    // switch reading to a paid API — that is a command-line decision.
+    const res = await post('/api/config', { apiKey: 'sk-new', model: 'gpt-x' })
+    expect(res.status).toBe(200)
+
+    expect(stored).toEqual({ openaiApiKey: 'sk-new' })
+    const state = (await (await fetch(handle.url + '/api/state')).json()) as any
+    expect(state.needsApiKey).toBe(!localOcr)
+    expect(state).not.toHaveProperty('model')
   })
 
   it('keeps a stored key when settings are saved without one', async () => {
-    stored = { openaiApiKey: 'sk-old', model: 'gpt-old' }
+    stored = { openaiApiKey: 'sk-old', outDir: 'books' }
 
-    const res = await post('/api/config', { model: 'gpt-new' })
+    const res = await post('/api/config', {})
     expect(res.status).toBe(200)
-    expect(stored).toMatchObject({ openaiApiKey: 'sk-old', model: 'gpt-new' })
+    expect(stored).toEqual({ openaiApiKey: 'sk-old', outDir: 'books' })
   })
 
   it('downloads an exported file', async () => {
@@ -329,6 +378,18 @@ describe('serve', () => {
 
     await until(() => pipelineCalls.length === 1, 'the book to be processed')
     expect(pipelineCalls[0]).toMatchObject({ forceCapture: false })
+  })
+
+  it('reads pages without a model stored by an older setup', async () => {
+    // Older setups prefilled gpt-4.1-mini, so a job that honoured it would
+    // silently send every page to a paid API instead of reading it locally.
+    vi.stubEnv('OPENAI_API_KEY', 'sk-test')
+    stored = { model: 'gpt-4.1-mini' } as UserConfig
+
+    expect((await post('/api/export', { asins: ['B00TEST'] })).status).toBe(202)
+
+    await until(() => pipelineCalls.length === 1, 'the book to be processed')
+    expect(pipelineCalls[0]!.model).toBeUndefined()
   })
 
   it('re-captures one book at a time', async () => {

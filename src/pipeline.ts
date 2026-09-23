@@ -126,7 +126,8 @@ export function defaultProfileDir(): string {
 
 /**
  * Fill in anything not given as a flag: environment (including `.env`) first,
- * then stored config, then the built-in default.
+ * then stored config, then the built-in default. The OCR model is the
+ * exception and never comes from stored config.
  */
 export async function applyConfig(options: Options): Promise<Options> {
   const stored = await loadConfig()
@@ -138,7 +139,12 @@ export async function applyConfig(options: Options): Promise<Options> {
     options.outDir || getEnv('KINDLE_OUT_DIR') || stored.outDir || 'out'
   options.profileDir =
     options.profileDir || getEnv('BROWSER_PROFILE_DIR') || defaultProfileDir()
-  options.model = options.model ?? getEnv('OCR_MODEL') ?? stored.model
+  // Only a flag or the environment can switch reading to OpenAI — never the
+  // stored config, which older setups prefilled with a paid model. `||` so an
+  // empty OCR_MODEL (as a blank line in `.env` leaves it) means "not set"
+  // rather than naming a model called "".
+  options.model =
+    options.model?.trim() || getEnv('OCR_MODEL')?.trim() || undefined
   options.concurrency = options.concurrency ?? stored.concurrency
 
   // The transcriber reads the key from the environment, so put the stored one

@@ -15,7 +15,6 @@ import { loadConfig, saveConfig } from './config'
 import { readContentStore } from './content-store'
 import { isProfileBusyError, launchBrowserContext } from './extract-kindle-book'
 import { fetchLibrary, type LibraryBook } from './kindle-library'
-import { DEFAULT_OCR_MODEL } from './openai-ocr'
 import {
   applyConfig,
   bookFellShort,
@@ -37,7 +36,7 @@ const VERSION = '0.3.0'
 const HELP = `kindle-export — export Kindle books you own as markdown
 
 Usage
-  kindle-export setup                  store your API key and defaults
+  kindle-export setup                  choose where books go, then sign in
   kindle-export serve                  open the web app in your browser
   kindle-export                        pick books from your library, then export
   kindle-export <ASIN...>              capture, transcribe and export (resumes)
@@ -56,7 +55,7 @@ Options
   --profile-dir <dir>    browser profile holding your session
                          (default: ~/.kindle-export/profile)
   --model <name>         read pages with an OpenAI model instead of locally
-                         (needs an API key; macOS reads them for free)
+                         (needs an API key; also OCR_MODEL in the environment)
   --concurrency <n>      pages transcribed in parallel (default: 16)
   --port <n>             with 'serve', the port to listen on (default: 8484)
   --otp <code>           2FA code, when there's no terminal to prompt on
@@ -69,17 +68,20 @@ Options
   -v, --version          show the version
 
 The web app ('kindle-export serve') walks through the same steps in a browser:
-store the API key, sign in to Amazon, tick the books, download the results.
+sign in to Amazon, tick the books, download the results.
 
 On macOS, pages are read on this machine for free using Apple's Vision
-framework — no API key, no network, no per-page cost. Pass --model to use an
-OpenAI model instead, which needs a key; that is also the fallback elsewhere.
+framework — no API key, no model to choose, no per-page cost. Reading them
+with OpenAI instead is an explicit choice per run: pass --model (or set
+OCR_MODEL), which needs an API key. Elsewhere, OpenAI is the only way to read
+pages, so 'setup' asks for a key there.
 
 Run 'kindle-export login' to sign in to Amazon; the session stays on this
-machine. 'kindle-export setup' stores defaults (and a key, if you want one) in
-~/.kindle-export/config.json. Settings can also come from flags or a .env
-file, which take precedence. AMAZON_EMAIL and AMAZON_PASSWORD are optional —
-set them only if you want sign-in scripted rather than doing it yourself.
+machine. 'kindle-export setup' stores the output folder (and the key, where
+one is needed) in ~/.kindle-export/config.json. Settings can also come from
+flags or a .env file, which take precedence. AMAZON_EMAIL and AMAZON_PASSWORD
+are optional — set them only if you want sign-in scripted rather than doing it
+yourself.
 
 Page images are deleted once a book is fully transcribed, since re-capturing
 costs time rather than data. Pass --keep-pages to hold on to them.
@@ -299,36 +301,36 @@ function renderEvents(asin: string): (event: PipelineEvent) => void {
   }
 }
 
-async function setup(): Promise<void> {
+/**
+ * Ask only what this machine needs: an output folder, and an API key where
+ * pages can't be read locally. There is deliberately no model question — on a
+ * Mac that reads pages itself, a model would only be a way to start paying by
+ * accident, so choosing OpenAI is left to `--model` or OCR_MODEL per run.
+ */
+export async function setup(): Promise<void> {
   const stored = await loadConfig()
   const localOcr = await isVisionOcrAvailable()
 
   console.log('Settings are stored in your home directory, so kindle-export')
   console.log('works from any folder. Press enter to keep a current value.\n')
 
+  let openaiApiKey = stored.openaiApiKey
   if (localOcr) {
-    console.log('This Mac can read page images by itself, free and offline,')
-    console.log('so there is nothing you have to set up here.\n')
-  }
+    console.log('This Mac reads page images by itself, free and offline, so')
+    console.log('there is no account or key to set up.\n')
+  } else {
+    console.log('This computer cannot read page images by itself, so an OpenAI')
+    console.log('API key is needed — reading a book usually costs well under a')
+    console.log('dollar. Create one at https://platform.openai.com/api-keys\n')
 
-  const openaiApiKey =
-    (await password({
-      message: localOcr
-        ? 'OpenAI API key (optional — enter to skip):'
-        : stored.openaiApiKey
+    openaiApiKey =
+      (await password({
+        message: stored.openaiApiKey
           ? 'OpenAI API key (enter to keep existing):'
           : 'OpenAI API key:',
-      mask: '*'
-    })) || stored.openaiApiKey
-
-  // Blank means local OCR where it exists, so don't prefill a model name that
-  // would silently switch reading to a paid API.
-  const model = await input({
-    message: localOcr
-      ? 'Model used to read page images (blank = this Mac):'
-      : 'Model used to read page images:',
-    default: stored.model ?? (localOcr ? '' : DEFAULT_OCR_MODEL)
-  })
+        mask: '*'
+      })) || stored.openaiApiKey
+  }
 
   const outDir = await input({
     message: 'Where should books be written?',
@@ -338,18 +340,12 @@ async function setup(): Promise<void> {
   const target = await saveConfig({
     ...stored,
     openaiApiKey: openaiApiKey || undefined,
-    model: model.trim() || undefined,
     outDir: outDir.trim() || undefined
   })
 
   console.log(`\nSaved to ${target} (readable only by you).`)
 
-  if (model.trim() && !openaiApiKey) {
-    console.log(
-      `No API key stored, but '${model.trim()}' needs one — leave the model ` +
-        'blank to read pages on this Mac instead.'
-    )
-  } else if (!openaiApiKey && !localOcr) {
+  if (!openaiApiKey && !localOcr) {
     console.log('No API key stored — transcription will not work until one is.')
   }
 
