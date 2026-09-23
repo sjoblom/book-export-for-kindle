@@ -1,5 +1,6 @@
 import type { BrowserContext } from './extract-kindle-book'
 import { type LibraryBook, parseLibraryPage } from './library-page'
+import { SIGNED_OUT_PATH_REGEX } from './session'
 
 export {
   type LibraryBook,
@@ -52,7 +53,7 @@ export async function fetchLibrary(
     await page.goto(LIBRARY_URL, { waitUntil: 'domcontentloaded' })
   }
 
-  if (/\/ap\/signin|\/gp\/signin/.test(page.url())) {
+  if (SIGNED_OUT_PATH_REGEX.test(new URL(page.url()).pathname)) {
     throw new NotSignedInError()
   }
 

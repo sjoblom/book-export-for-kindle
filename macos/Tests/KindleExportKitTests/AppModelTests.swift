@@ -891,6 +891,8 @@ final class AppBridgeTests: XCTestCase {
       "https://read.amazon.com/ap/signin",
       "https://read.amazon.com/gp/signin/x",
       "https://read.amazon.com.evil.example/kindle-library",
+      // Where a session without cookies is sent: the reader's own domain.
+      "https://read.amazon.com/landing",
     ]
     for url in yes { XCTAssertTrue(NativeBackend.isSignedInUrl(URL(string: url)), url) }
     for url in no { XCTAssertFalse(NativeBackend.isSignedInUrl(URL(string: url)), url) }

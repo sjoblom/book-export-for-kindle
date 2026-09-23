@@ -16,6 +16,8 @@ describe('isSignedInUrl', () => {
     // An expired session can bounce to a signin path on the reader host too.
     expect(isSignedInUrl('https://read.amazon.com/ap/signin')).toBe(false)
     expect(isSignedInUrl('https://read.amazon.com/gp/signin')).toBe(false)
+    // A session with no Amazon cookies lands on the reader's own domain.
+    expect(isSignedInUrl('https://read.amazon.com/landing')).toBe(false)
   })
 
   it('rejects everything that is not the reader host over https', () => {

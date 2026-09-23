@@ -98,10 +98,40 @@ public final class NativeBackend: NSObject, AppBackend {
   // MARK: - sign-in
 
   /// session.ts `isSignedInUrl`: on the reader's domain and not on a sign-in
-  /// path.
+  /// path or the signed-out landing page. A session without Amazon cookies is
+  /// sent to `read.amazon.com/landing` — the reader's own domain — rather
+  /// than to a sign-in page, so the domain alone proves nothing.
   public nonisolated static func isSignedInUrl(_ url: URL?) -> Bool {
     guard let url, url.scheme == "https", url.host == "read.amazon.com" else { return false }
-    return url.path.range(of: #"/ap/signin|/gp/signin"#, options: .regularExpression) == nil
+    return url.path.range(
+      of: #"/ap/signin|/gp/signin|^/landing"#, options: .regularExpression) == nil
+  }
+
+  /// On the signed-out landing page, press its "Sign in with your account"
+  /// button, which goes to Amazon's sign-in page and back to the library. An
+  /// ordinary button, so a script click works (unlike the reader's chevrons).
+  /// Showing the landing page instead would add a step whose purpose isn't
+  /// obvious to someone who only wanted to sign in.
+  static let followLandingSignIn = """
+    (() => {
+      const button = document.querySelector('#top-sign-in-btn') ||
+        Array.from(document.querySelectorAll('button, a, [role=button]'))
+          .find((el) => /sign in with your account|^\\s*sign in\\s*$/i.test(el.textContent || ''));
+      if (!button) return false;
+      button.click();
+      return true;
+    })()
+    """
+
+  private func leaveLandingPage() async {
+    guard session.currentURL?.path.hasPrefix("/landing") == true else { return }
+    _ = try? await session.webView.evaluateJavaScript(Self.followLandingSignIn)
+    // Give the navigation a moment so the sign-in view opens on Amazon's
+    // form, not on the page it is leaving.
+    let deadline = Date().addingTimeInterval(5)
+    while session.currentURL?.path.hasPrefix("/landing") == true, Date() < deadline {
+      try? await Task.sleep(nanoseconds: 200_000_000)
+    }
   }
 
   /// session.ts `interactiveLogin`: open the library; if Amazon wants a
@@ -121,6 +151,7 @@ public final class NativeBackend: NSObject, AppBackend {
     if Self.isSignedInUrl(session.currentURL) {
       return true
     }
+    await leaveLandingPage()
     return await waitForSignIn()
   }
 

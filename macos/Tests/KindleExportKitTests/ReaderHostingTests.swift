@@ -186,3 +186,25 @@ final class ReaderHostingTests: XCTestCase {
     }
   }
 }
+
+import JavaScriptCore
+
+final class LandingSignInScriptTests: XCTestCase {
+  /// JavaScript inside a Swift literal: check it parses and presses the
+  /// landing page's button, against a minimal stand-in for the page.
+  func testPressesTheLandingPageSignInButton() throws {
+    let context = try XCTUnwrap(JSContext())
+    context.evaluateScript("""
+      var clicked = 0;
+      var button = { textContent: 'Sign in with your account', click: function () { clicked++ } };
+      var document = {
+        querySelector: function (s) { return s === '#top-sign-in-btn' ? button : null },
+        querySelectorAll: function () { return [] }
+      };
+      """)
+    let result = context.evaluateScript(NativeBackend.followLandingSignIn)
+    XCTAssertNil(context.exception)
+    XCTAssertEqual(result?.toBool(), true)
+    XCTAssertEqual(context.evaluateScript("clicked")?.toInt32(), 1)
+  }
+}

@@ -16,12 +16,17 @@ const SIGN_IN_TIMEOUT_MS = 10 * 60 * 1000
 
 const SIGN_IN_POLL_MS = 1000
 
+/** Paths on read.amazon.com that mean nobody is signed in. */
+export const SIGNED_OUT_PATH_REGEX = /\/ap\/signin|\/gp\/signin|^\/landing/
+
 /**
  * Whether a URL shows a signed-in Kindle session.
  *
- * Amazon bounces an expired session from read.amazon.com to a signin page, so
- * "on the reader domain and not on a signin path" is the working definition —
- * the same one the library fetcher uses to throw NotSignedInError.
+ * Amazon bounces an expired session from read.amazon.com to a signin page,
+ * and a session with no Amazon cookies at all to `read.amazon.com/landing` —
+ * the reader's own domain — so "on the reader domain, and on neither a signin
+ * path nor the landing page" is the working definition, the same one the
+ * library fetcher uses to throw NotSignedInError.
  */
 export function isSignedInUrl(url: string): boolean {
   let parsed: URL
@@ -34,7 +39,7 @@ export function isSignedInUrl(url: string): boolean {
   return (
     parsed.protocol === 'https:' &&
     parsed.hostname === 'read.amazon.com' &&
-    !/\/ap\/signin|\/gp\/signin/.test(parsed.pathname)
+    !SIGNED_OUT_PATH_REGEX.test(parsed.pathname)
   )
 }
 
