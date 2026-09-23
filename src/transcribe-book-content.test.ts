@@ -252,6 +252,25 @@ describe('transcribeBook', () => {
     expect(content[1]!.text).toBe('and then the body text')
   })
 
+  it('accepts a page that is only its chapter heading without retrying', async () => {
+    await writeBook(2, [{ label: 'Part Two', page: 2 }])
+
+    const client = fakeClient((i) => (i === 0 ? 'page one' : 'PART TWO'))
+    const { content, failedPages } = await transcribeBook({
+      asin: ASIN,
+      outDir: root,
+      concurrency: 1,
+      client
+    })
+
+    // The heading is stripped, leaving nothing, but the engine did read the
+    // page: retrying it as an empty response would pay twice more for the
+    // same answer.
+    expect(client.calls).toBe(2)
+    expect(failedPages).toEqual([])
+    expect(content[1]!.text).toBe('')
+  })
+
   it('reuses already-transcribed pages and retries only what is missing', async () => {
     await writeBook(3)
 

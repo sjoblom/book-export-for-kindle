@@ -5,7 +5,7 @@ import path from 'node:path'
 
 import pMap from 'p-map'
 
-import type { BookMetadata, ContentChunk, TocItem } from './types'
+import type { BookMetadata, ContentChunk } from './types'
 import {
   createContentWriter,
   readContentStore,
@@ -18,13 +18,8 @@ import {
   OcrUnavailableError
 } from './ocr-engine'
 import { type ChatCompletionClient, createOpenAiOcrEngine } from './openai-ocr'
-import {
-  assert,
-  escapeRegExp,
-  getEnv,
-  readJsonFile,
-  resolveScreenshotPath
-} from './utils'
+import { createTocLabelResolver, shapePageText } from './page-text'
+import { assert, getEnv, readJsonFile, resolveScreenshotPath } from './utils'
 import { createVisionOcrEngine, isVisionOcrAvailable } from './vision-ocr'
 
 export type { ChatCompletionClient } from './openai-ocr'
@@ -159,15 +154,7 @@ export async function transcribeBook({
   assert(metadata.pages?.length, 'no page screenshots found')
   assert(metadata.toc?.length, 'invalid book metadata: missing toc')
 
-  const pageToTocItemMap = metadata.toc.reduce(
-    (acc, tocItem) => {
-      if (tocItem.page !== undefined) {
-        acc[tocItem.page] = tocItem
-      }
-      return acc
-    },
-    {} as Record<number, TocItem>
-  )
+  const tocLabelFor = createTocLabelResolver(metadata)
 
   // const pageScreenshotsDir = path.join(outDir, 'pages')
   // const pageScreenshots = await globby(`${pageScreenshotsDir}/*.png`)
@@ -231,7 +218,6 @@ export async function transcribeBook({
   await pMap(
     pending,
     async (pageChunk) => {
-      const pageChunkIndex = metadata.pages.indexOf(pageChunk)
       const { screenshot, index, page } = pageChunk
       // Stored relative to the book directory; older captures stored something
       // else again, so never open `screenshot` directly.
@@ -287,14 +273,10 @@ export async function transcribeBook({
             continue
           }
 
-          let text = raw.text
-            // A page number read off the top of the page. Only the very first
-            // line: a digits-only line further down is content — a year as a
-            // heading, a chapter number set mid-page — and used to be deleted.
-            .replace(/^\s*\d+[ \t]*\n+/, '')
-            // .replaceAll(/\n+/g, '\n')
-            .replaceAll(/^\s*/gm, '')
-            .replaceAll(/\s*$/gm, '')
+          // Judged before the TOC label comes off: a chapter-opening page that
+          // is nothing but its heading is a real read, not an empty response
+          // worth retrying.
+          const hasText = shapePageText(raw.text) !== ''
 
           ++retries
 
@@ -303,29 +285,26 @@ export async function transcribeBook({
           // book, and an empty page is the honest transcription of one.
           // Failing it instead would mark the book permanently incomplete and
           // keep its page images from ever being cleaned up.
-          if (!text && retries < Math.min(EMPTY_RESPONSE_RETRIES, maxRetries)) {
+          if (
+            !hasText &&
+            retries < Math.min(EMPTY_RESPONSE_RETRIES, maxRetries)
+          ) {
             await sleep(Math.min(2000, 200 * 2 ** retries))
             continue
           }
 
-          if (!text) {
+          if (!hasText) {
             console.warn('treating page as blank', {
               index,
               screenshot: imagePath
             })
           }
 
-          const prevPageChunk = metadata.pages[pageChunkIndex - 1]
-          if (prevPageChunk && prevPageChunk.page !== page) {
-            const tocItem = pageToTocItemMap[page]
-            if (tocItem) {
-              text = text.replace(
-                // eslint-disable-next-line security/detect-non-literal-regexp
-                new RegExp(`^${escapeRegExp(tocItem.label)}\\s*`, 'i'),
-                ''
-              )
-            }
-          }
+          // The same shaping the exporters redo from `lines`, so text stored
+          // now and text rebuilt later only differ when the rules have.
+          const text = shapePageText(raw.text, {
+            tocLabelToStrip: tocLabelFor(pageChunk)
+          })
 
           const result: ContentChunk = {
             index,

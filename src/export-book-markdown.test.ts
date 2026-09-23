@@ -167,4 +167,42 @@ describe('exportBookMarkdown', () => {
     expect(markdown).toContain('Opening words.')
     expect(markdown).not.toContain('FOREIGN PAGE')
   })
+
+  it('rebuilds text from kept OCR lines instead of the stored text', async () => {
+    await writeBook([
+      {
+        ...chunk(0, 'STALE first line that\nSTALE wraps on.'),
+        // What the engine saw, which today's rules join into one paragraph.
+        lines: [
+          {
+            text: 'A first line that',
+            left: 40,
+            top: 100,
+            width: 820,
+            height: 30
+          },
+          { text: 'wraps on.', left: 40, top: 145, width: 300, height: 30 }
+        ]
+      },
+      // Read by a model, so there is nothing to rebuild from.
+      chunk(1, 'Prose read by a model.'),
+      chunk(2, 'First notes.'),
+      chunk(3, 'Second notes.')
+    ])
+
+    const markdown = await fs.readFile(
+      await exportBookMarkdown({ asin: ASIN, outDir }),
+      'utf8'
+    )
+
+    expect(markdown).toContain('A first line that wraps on.')
+    expect(markdown).not.toContain('STALE')
+    expect(markdown).toContain('Prose read by a model.')
+
+    // content.json keeps the text as the OCR run first produced it.
+    const stored = JSON.parse(
+      await fs.readFile(path.join(outDir, ASIN, 'content.json'), 'utf8')
+    ) as { chunks: ContentChunk[] }
+    expect(stored.chunks[0]!.text).toContain('STALE')
+  })
 })

@@ -5,6 +5,7 @@ import path from 'node:path'
 
 import type { BookMetadata, ContentChunk } from './types'
 import { readContentStore, selectReusableChunks } from './content-store'
+import { withCurrentText } from './page-text'
 import { formatContentChunks } from './postprocess-text'
 import { resolveBookSections } from './toc-sections'
 import { assert, normalizeAuthors, readJsonFile } from './utils'
@@ -141,10 +142,17 @@ export async function exportBookMarkdown({
   // capture's pages, one chunk per page, each with actual text. Rendering
   // `content.json` as-is would print a stale capture or duplicate pages that
   // every completeness check had already discounted.
-  const content = selectReusableChunks(
-    provided
-      ? { captureId: metadata.captureId, chunks: provided }
-      : await readContentStore(outDir),
+  //
+  // Pages whose raw OCR lines were kept are then re-derived from them, so the
+  // export reflects today's paragraph rules rather than whichever ones were
+  // current when the book was read.
+  const content = withCurrentText(
+    selectReusableChunks(
+      provided
+        ? { captureId: metadata.captureId, chunks: provided }
+        : await readContentStore(outDir),
+      metadata
+    ),
     metadata
   )
   assert(content.length, 'no book content found')
