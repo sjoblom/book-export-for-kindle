@@ -149,6 +149,19 @@ public final class NativeBackend: NSObject, AppBackend {
     return false
   }
 
+  /// Remove everything WebKit keeps for Amazon's sites — the session
+  /// cookies above all — and leave the reader on a blank page. Only Amazon's
+  /// records go: the app has no others, but a blanket wipe would also drop
+  /// anything WebKit keeps for itself.
+  public func signOut() async {
+    let store = session.webView.configuration.websiteDataStore
+    let types = WKWebsiteDataStore.allWebsiteDataTypes()
+    let records = await store.dataRecords(ofTypes: types)
+    let amazon = records.filter { $0.displayName.localizedCaseInsensitiveContains("amazon") }
+    await store.removeData(ofTypes: types, for: amazon)
+    session.webView.load(URLRequest(url: URL(string: "about:blank")!))
+  }
+
   // MARK: - library
 
   /// How long a freshly loaded page gets to redirect a signed-out session.

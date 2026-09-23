@@ -17,6 +17,7 @@ final class FakeBackend: AppBackend {
 
   var libraryReads = 0
   var logins = 0
+  var signOuts = 0
   var loginConfirms = true
   /// Outcomes for the next library reads, in order; then `fallback`.
   var outcomes: [Outcome] = []
@@ -68,6 +69,8 @@ final class FakeBackend: AppBackend {
     case .failure(let message): throw LibraryService.LibraryError.requestFailed(message)
     }
   }
+
+  func signOut() async { signOuts += 1 }
 
   func signIn() async -> Bool {
     logins += 1
@@ -610,6 +613,35 @@ final class AppModelTests: XCTestCase {
 
     await assertEqual(post("/api/login"), 409)
     XCTAssertEqual(backend.logins, 0)
+  }
+
+  func testSignOutForgetsTheSessionAndTheLibraryWithoutReopeningSignIn() async throws {
+    try await idle()
+    XCTAssertNotNil(LibraryCache.read(from: environment.libraryCacheDir))
+    let logins = backend.logins
+
+    let reply = await request("POST", "/api/signout")
+    XCTAssertEqual(reply.status, 200)
+    XCTAssertEqual(backend.signOuts, 1)
+    XCTAssertEqual(model.amazon, .signedOut)
+    XCTAssertNil(model.library)
+    XCTAssertNil(model.busy)
+    // The list belonged to the account that just left.
+    XCTAssertNil(LibraryCache.read(from: environment.libraryCacheDir))
+    // Deliberate, so the sign-in page stays closed until asked for.
+    try await Task.sleep(nanoseconds: 50_000_000)
+    XCTAssertEqual(backend.logins, logins)
+    XCTAssertEqual(reply.body["amazon"] as? String, "signed-out")
+  }
+
+  func testRefusesToSignOutWhileExporting() async throws {
+    try await idle()
+    backend.holdBooks = true
+    _ = await post("/api/export", ["asin": "B00TEST"])
+    try await until("the book to start") { backend.calls.count == 1 }
+
+    await assertEqual(post("/api/signout"), 409)
+    XCTAssertEqual(backend.signOuts, 0)
   }
 
   // MARK: - start-up, library and sign-in

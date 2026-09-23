@@ -60,7 +60,10 @@ var READER = {
     text: 'A Chrome window has opened on Amazon’s sign-in page. Sign in the way you always do — including any code Amazon sends you. The window closes by itself when you’re done. This app never sees your password.'
   },
   signIn: 'A Chrome window opens on Amazon’s own sign-in page. Your password is never seen or stored by this app.',
-  reading: 'Chrome is reading the book in a minimized window — no need to touch it. It closes on its own; if Amazon wants you to sign in, it pops up by itself.'
+  reading: 'Chrome is reading the book in a minimized window — no need to touch it. It closes on its own; if Amazon wants you to sign in, it pops up by itself.',
+  // The Chrome profile is shared with the terminal tool; signing it out from
+  // here would sign the CLI out too, behind its back.
+  canSignOut: false
 }
 
 function request(method, path, body) {
@@ -115,7 +118,8 @@ var READER = {
   signingInStatus: 'Signing in to Amazon…',
   signingIn: null,
   signIn: 'Opens Amazon’s sign-in page in this window.',
-  reading: 'Reading the book — this takes a while; you can keep using your Mac.'
+  reading: 'Reading the book — this takes a while; you can keep using your Mac.',
+  canSignOut: true
 }
 
 // A reply that never comes (the app busy, or a bug on the Swift side) must
@@ -700,6 +704,10 @@ button:focus-visible, a:focus-visible, input:focus-visible, summary:focus-visibl
               <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>
               <span id="menu-signin-text">Sign in to Amazon again</span>
             </button>
+            <button class="menu-item" id="menu-signout" type="button" hidden>
+              <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3"/><path d="M10 17l-5-5 5-5"/><path d="M5 12h11"/></svg>
+              Sign out of Amazon
+            </button>
             <details id="log-details" style="margin-top:6px">
               <summary>Activity log</summary>
               <div class="log" id="log"></div>
@@ -1096,6 +1104,9 @@ function renderMenu() {
   var signin = $('menu-signin')
   signin.disabled = !!state.busy
   $('menu-signin-text').textContent = state.amazon === 'signed-in' ? 'Sign in to Amazon again' : 'Sign in to Amazon'
+  var signout = $('menu-signout')
+  signout.hidden = !(READER.canSignOut && state.amazon === 'signed-in')
+  signout.disabled = !!state.busy
 
   var log = $('log')
   var entries = state.queue.log
@@ -1459,6 +1470,13 @@ function signIn() {
   api('/api/login').catch(function (err) { toast(err.message) })
 }
 
+function signOut() {
+  if (!window.confirm('Sign out of Amazon?\\n\\nKindle Export forgets this Amazon account and its book list. Books you already exported stay where they are.')) return
+  api('/api/signout').then(function () {
+    toast('Signed out of Amazon.', 'good')
+  }).catch(function (err) { toast(err.message) })
+}
+
 function refreshLibrary() {
   api('/api/library').catch(function (err) { toast(err.message) })
 }
@@ -1533,6 +1551,7 @@ $('menu-finder').addEventListener('click', function () {
   api('/api/reveal', {}).catch(function (err) { toast(err.message) })
 })
 
+$('menu-signout').addEventListener('click', signOut)
 $('menu-signin').addEventListener('click', function () {
   setMenu(false)
   signIn()

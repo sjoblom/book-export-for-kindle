@@ -670,6 +670,15 @@ describe('page transport', () => {
     )
   })
 
+  it('offers signing out only in the app', () => {
+    // The browser page runs on the Chrome profile the terminal tool shares;
+    // the app owns its session and can forget it.
+    expect(pageScript(renderPage({ transport: 'bridge' }))).toContain(
+      'canSignOut: true'
+    )
+    expect(pageScript(renderPage())).toContain('canSignOut: false')
+  })
+
   it('bridge mode sends requests and settles them from replies', async () => {
     const { context, window, messages } = fakeBrowser()
     new vm.Script(pageScript(renderPage({ transport: 'bridge' }))).runInContext(

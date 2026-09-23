@@ -170,6 +170,10 @@ public final class AppModel {
         try startLogin()
         return AppResponse(202, uiState)
 
+      case "POST /api/signout":
+        try await signOut()
+        return AppResponse(200, uiState)
+
       case "POST /api/library":
         if busy == .export {
           throw AppHTTPError(
@@ -308,6 +312,32 @@ public final class AppModel {
   }
 
   // MARK: - amazon & library
+
+  /// Forget the Amazon account: its session, and the library list that
+  /// belongs to it. The person lands on the signed-out notice with its "Sign
+  /// in to Amazon" button rather than on the sign-in page: signing out is as
+  /// likely to be about leaving as about switching accounts.
+  private func signOut() async throws {
+    if busy == .export {
+      throw AppHTTPError(409, "An export is running — sign out once it has finished.")
+    }
+    if busy != nil {
+      throw AppHTTPError(409, "Kindle Export is busy with Amazon — try again in a moment")
+    }
+
+    busy = .login
+    broadcast()
+    await backend.signOut()
+    try? FileManager.default.removeItem(at: LibraryCache.path(in: environment.libraryCacheDir))
+    library = nil
+    libraryError = nil
+    amazonError = nil
+    amazon = .signedOut
+    // Signing out is deliberate; the sign-in page shouldn't reopen by itself.
+    autoSignInUsed = true
+    busy = nil
+    broadcast()
+  }
 
   private func startLogin() throws {
     if busy == .export {

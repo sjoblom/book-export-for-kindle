@@ -19,6 +19,10 @@ public protocol AppBackend: AnyObject {
   /// gave up (session.ts `interactiveLogin`).
   func signIn() async -> Bool
 
+  /// Forget the Amazon session (its cookies and site data), so the next
+  /// library read finds nobody signed in.
+  func signOut() async
+
   /// Run one book through capture → transcribe → export (pipeline.ts
   /// `processBook`), reporting events on the main actor as they happen.
   func processBook(
