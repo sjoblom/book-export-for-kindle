@@ -21,6 +21,9 @@ describe('isSignedInUrl', () => {
     ).toBe(false)
     // An expired session can bounce to a signin path on the reader host too.
     expect(isSignedInUrl('https://read.amazon.com/ap/signin')).toBe(false)
+    // Other steps of Amazon's sign-in, as the native app classifies them.
+    expect(isSignedInUrl('https://read.amazon.com/ap/cvf/request')).toBe(false)
+    expect(isSignedInUrl('https://read.amazon.com/ap/mfa')).toBe(false)
     expect(isSignedInUrl('https://read.amazon.com/gp/signin')).toBe(false)
     // A session with no Amazon cookies lands on the reader's own domain.
     expect(isSignedInUrl('https://read.amazon.com/landing')).toBe(false)

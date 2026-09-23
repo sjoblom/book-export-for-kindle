@@ -486,3 +486,54 @@ final class CaptureScriptTests: XCTestCase {
     XCTAssertEqual(ReaderSession.keyEventFields(.character("0")).1, "0")
   }
 }
+
+/// One definition of signed-in and signed-out pages, for the capture and the
+/// app's sign-in window alike (session.ts / extract-kindle-book.ts).
+final class AmazonURLsTests: XCTestCase {
+  private func url(_ string: String) -> URL? { URL(string: string) }
+
+  func testSignedOutPages() {
+    let signedOut = [
+      "https://www.amazon.com/ap/signin?openid.return_to=https://read.amazon.com",
+      "https://read.amazon.com/ap/signin",
+      "https://www.amazon.com/gp/signin/x",
+      // Where a session without cookies is sent: the reader's own domain.
+      "https://read.amazon.com/landing",
+      "https://read.amazon.com/landing?ref=x",
+      // The challenges after the sign-in form are still signing in.
+      "https://www.amazon.com/ap/cvf/request?arb=1",
+      "https://www.amazon.com/ap/mfa?arb=1",
+    ]
+    for string in signedOut {
+      XCTAssertTrue(AmazonURLs.isSignedOut(url(string)), string)
+      XCTAssertFalse(AmazonURLs.isSignedIn(url(string)), string)
+      XCTAssertFalse(NativeBackend.isSignedInUrl(url(string)), string)
+    }
+  }
+
+  func testReaderPagesAreSignedIn() {
+    for string in ["https://read.amazon.com/?asin=B00TEST", "https://read.amazon.com/kindle-library"] {
+      XCTAssertTrue(AmazonURLs.isSignedIn(url(string)), string)
+      XCTAssertFalse(AmazonURLs.isSignedOut(url(string)), string)
+    }
+  }
+
+  func testNeitherOffAmazon() {
+    for string in [
+      "https://example.com/ap/signin", "https://read.amazon.com.evil.example/landing",
+      "about:blank",
+    ] {
+      XCTAssertFalse(AmazonURLs.isSignedOut(url(string)), string)
+      XCTAssertFalse(AmazonURLs.isSignedIn(url(string)), string)
+    }
+    XCTAssertFalse(AmazonURLs.isSignedOut(nil))
+    XCTAssertFalse(AmazonURLs.isSignedIn(nil))
+    XCTAssertFalse(AmazonURLs.isSignedIn(url("http://read.amazon.com/kindle-library")))
+  }
+
+  func testLandingPage() {
+    XCTAssertTrue(AmazonURLs.isLanding(url("https://read.amazon.com/landing")))
+    XCTAssertFalse(AmazonURLs.isLanding(url("https://www.amazon.com/ap/signin")))
+    XCTAssertFalse(AmazonURLs.isLanding(url("https://read.amazon.com/kindle-library")))
+  }
+}

@@ -22,6 +22,51 @@ export type NavigationResult =
   | 'no-next-page'
   /** Nothing rendered, but a next-page control is still sitting there. */
   | 'stalled'
+  /**
+   * Nothing rendered, and the reader itself is gone or unreadable: no page
+   * image, or no footer to read. A missing chevron means nothing here — every
+   * control is missing when the reader is.
+   */
+  | 'reader-lost'
+  /** The document went to Amazon's sign-in (or signed-out landing) page. */
+  | 'signed-out'
+
+/** What the capture could see after a page turn that rendered nothing new. */
+export interface NavigationEvidence {
+  /** Whether a different page image rendered. */
+  navigated: boolean
+  /** Whether the document is on a signed-out Amazon page. */
+  signedOut: boolean
+  /** Whether the reader's main page image is in the document now. */
+  pageImage: boolean
+  /** Whether the footer can be read now — not the reading from before the turn. */
+  footerReadable: boolean
+  /** Whether a visible, enabled next-page control is there. */
+  nextPageUsable: boolean
+}
+
+/**
+ * Classify one page-turn attempt.
+ *
+ * "No next-page control" is the one sign of an ending, so it only counts as
+ * one while the reader is demonstrably still there. When the session expires
+ * mid-book the document goes to a sign-in page, and a reader that crashed or
+ * half-unloaded has no controls either; both lack a chevron exactly as the
+ * last screen of a book does, and treating them the same would record a
+ * capture that lost the reader at page 10 of 100 as a finished book.
+ */
+export function navigationResult({
+  navigated,
+  signedOut,
+  pageImage,
+  footerReadable,
+  nextPageUsable
+}: NavigationEvidence): NavigationResult {
+  if (navigated) return 'navigated'
+  if (signedOut) return 'signed-out'
+  if (!pageImage || !footerReadable) return 'reader-lost'
+  return nextPageUsable ? 'stalled' : 'no-next-page'
+}
 
 /** What the capture loop should do next. */
 export type CaptureAction =
@@ -210,14 +255,25 @@ function trailingAbsences(observations: NavigationResult[]): number {
  * the footer counts pages, not screens, so it cannot vouch for the screens
  * after this one. That case is recorded as incomplete, and the person can
  * capture again, rather than as a finished book that is quietly short.
+ *
+ * A reader that has gone (`reader-lost`) is retried like a stall — it may be
+ * a moment mid-render — and breaks any run of absences, so it can never add
+ * up to an ending. A sign-in page (`signed-out`) stops at once, as a stall.
  */
 export function shouldStopCapture({
   observations,
   onLastNumberedPage,
   maxAttempts
 }: NavigationAttemptInput): CaptureAction {
-  if (observations.at(-1) === 'navigated') {
+  const latest = observations.at(-1)
+  if (latest === 'navigated') {
     return { type: 'capture-next-screen' }
+  }
+
+  // Retrying page turns on a sign-in page can't succeed; stopping as a stall
+  // hands the capture to the recovery, whose reload routes it to sign-in.
+  if (latest === 'signed-out') {
+    return { type: 'stop', complete: false, reason: 'navigation-failed' }
   }
 
   const confirmedAbsent =
@@ -232,7 +288,10 @@ export function shouldStopCapture({
     return { type: 'retry-navigation' }
   }
 
-  return onLastNumberedPage
+  // A reader that went away says nothing about where the book ends, even on
+  // its last numbered page, so it is an ordinary stall there too — which also
+  // allows it the ordinary number of reloads.
+  return onLastNumberedPage && latest !== 'reader-lost'
     ? { type: 'stop', complete: false, reason: 'end-unconfirmed' }
     : { type: 'stop', complete: false, reason: 'navigation-failed' }
 }
@@ -283,7 +342,9 @@ export const MAX_RECOVERIES_AT_UNCONFIRMED_END = 1
  * Stop reasons that mean "the reader stopped cooperating", as opposed to "the
  * book ended". Only these are worth a reload.
  *
- * - `navigation-failed`: a usable next-page control that won't turn, mid-book.
+ * - `navigation-failed`: a usable next-page control that won't turn, mid-book;
+ *   or the reader gone from the page (signed out, unloaded) anywhere — a
+ *   reload brings it back, through sign-in if need be.
  * - `end-unconfirmed`: the same on the last numbered page (see above).
  * - `no-page-nav`: the footer became unreadable, which is a rendering fault,
  *   not a position — a reload redraws it.

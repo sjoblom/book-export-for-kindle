@@ -199,9 +199,35 @@ public final class ReaderSession: NSObject {
 
   public var currentURL: URL? { webView.url }
 
-  /// Amazon's sign-in (and its challenge pages) live under `/ap/`.
+  /// On any of Amazon's signed-out pages — the sign-in form and its
+  /// challenges, or the reader's signed-out landing page (`AmazonURLs`).
   public var isOnSignIn: Bool {
-    webView.url?.path.contains("/ap/signin") == true
+    AmazonURLs.isSignedOut(webView.url)
+  }
+
+  /// Presses the landing page's "Sign in with your account" button. An
+  /// ordinary button, so a script click works (unlike the reader's chevrons).
+  static let landingSignInButton = #"""
+    (() => {
+      const button = document.querySelector('#top-sign-in-btn') ||
+        Array.from(document.querySelectorAll('button, a, [role=button]'))
+          .find((el) => /sign in with your account|^\s*sign in\s*$/i.test(el.textContent || ''));
+      if (!button) return false;
+      button.click();
+      return true;
+    })()
+    """#
+
+  /// On the signed-out landing page, press its sign-in button and give the
+  /// navigation a moment, so whoever signs in starts on Amazon's form rather
+  /// than on a page whose one useful button they'd have to find first.
+  public func leaveLandingPage() async {
+    guard AmazonURLs.isLanding(webView.url) else { return }
+    _ = await evaluate(Self.landingSignInButton)
+    let deadline = Date().addingTimeInterval(5)
+    while AmazonURLs.isLanding(webView.url), Date() < deadline {
+      try? await Task.sleep(nanoseconds: 200_000_000)
+    }
   }
 
   /// Load `url` and wait until loading finishes, or a sign-in page shows up
@@ -223,10 +249,12 @@ public final class ReaderSession: NSObject {
   }
 
   /// Wait (with the window visible — the caller's job) for the person to get
-  /// through Amazon's sign-in, i.e. for the URL to leave `/ap/`.
+  /// through Amazon's sign-in, i.e. for the URL to reach a signed-in reader
+  /// page. Merely leaving the sign-in form isn't enough: the landing page is
+  /// not the form and is still signed out.
   public func waitForSignIn(timeout: TimeInterval) async throws {
     let deadline = Date().addingTimeInterval(timeout)
-    while webView.url?.path.hasPrefix("/ap/") == true || webView.url == nil {
+    while !AmazonURLs.isSignedIn(webView.url) {
       if Date() > deadline { throw SessionError(message: "sign-in was not completed in time") }
       try await Task.sleep(nanoseconds: 500_000_000)
     }

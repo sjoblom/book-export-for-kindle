@@ -16,7 +16,9 @@ import {
   NAVIGATION_ATTEMPTS,
   NAVIGATION_CLICK_TIMEOUT_MS,
   NAVIGATION_TIMEOUT_MS,
+  type NavigationEvidence,
   type NavigationResult,
+  navigationResult,
   navigationTimeoutMs,
   resumeScreenDecision,
   shouldRecover,
@@ -174,6 +176,125 @@ describe('shouldStopCapture: mid-book', () => {
     expect(decide([...stalls(2), 'navigated'])).toEqual({
       type: 'capture-next-screen'
     })
+  })
+})
+
+describe('navigationResult', () => {
+  const readerThere: NavigationEvidence = {
+    navigated: false,
+    signedOut: false,
+    pageImage: true,
+    footerReadable: true,
+    nextPageUsable: false
+  }
+
+  it('reads a missing chevron as an absence only while the reader is there', () => {
+    expect(navigationResult(readerThere)).toBe('no-next-page')
+    expect(navigationResult({ ...readerThere, nextPageUsable: true })).toBe(
+      'stalled'
+    )
+    expect(navigationResult({ ...readerThere, navigated: true })).toBe(
+      'navigated'
+    )
+  })
+
+  it('reads a vanished page image or footer as a lost reader, not an ending', () => {
+    // No reader means no chevron either, which looks exactly like the end.
+    expect(navigationResult({ ...readerThere, pageImage: false })).toBe(
+      'reader-lost'
+    )
+    expect(navigationResult({ ...readerThere, footerReadable: false })).toBe(
+      'reader-lost'
+    )
+  })
+
+  it('reads a sign-in page as signed out, whatever else it shows', () => {
+    expect(
+      navigationResult({
+        ...readerThere,
+        signedOut: true,
+        pageImage: false,
+        footerReadable: false
+      })
+    ).toBe('signed-out')
+  })
+})
+
+const lost = (n: number): NavigationResult[] =>
+  Array.from({ length: n }, () => 'reader-lost')
+
+describe('shouldStopCapture: the reader going away', () => {
+  it('never completes a capture whose reader vanished mid-book', () => {
+    // The regression: page 10 of 100, the document loses the reader, and five
+    // chevron-less attempts were read as a confirmed end of the book.
+    const maxAttempts = maxNavigationAttempts(false)
+    const decide = (observations: NavigationResult[]) =>
+      shouldStopCapture({
+        observations,
+        onLastNumberedPage: false,
+        maxAttempts
+      })
+    for (let attempt = 1; attempt < maxAttempts; attempt++) {
+      expect(decide(lost(attempt))).toEqual({ type: 'retry-navigation' })
+    }
+    const stop = decide(lost(maxAttempts))
+    expect(stop).toEqual({
+      type: 'stop',
+      complete: false,
+      reason: 'navigation-failed'
+    })
+    // And it is a stall, so the capture reloads (and signs in) rather than ends.
+    expect(isStall('navigation-failed')).toBe(true)
+  })
+
+  it('does not let a lost reader stand in for a missing chevron', () => {
+    const maxAttempts = maxNavigationAttempts(false)
+    expect(
+      shouldStopCapture({
+        observations: [
+          'stalled',
+          'stalled',
+          'stalled',
+          'no-next-page',
+          'reader-lost'
+        ],
+        onLastNumberedPage: false,
+        maxAttempts
+      })
+    ).toEqual({ type: 'stop', complete: false, reason: 'navigation-failed' })
+  })
+
+  it('treats a lost reader on the last numbered page as a stall, not an unconfirmed end', () => {
+    const maxAttempts = maxNavigationAttempts(true)
+    expect(
+      shouldStopCapture({
+        observations: ['no-next-page', 'reader-lost', 'reader-lost'],
+        onLastNumberedPage: true,
+        maxAttempts
+      })
+    ).toEqual({ type: 'stop', complete: false, reason: 'navigation-failed' })
+  })
+
+  it('stops at once on a sign-in page, as a stall', () => {
+    for (const onLastNumberedPage of [false, true]) {
+      expect(
+        shouldStopCapture({
+          observations: ['signed-out'],
+          onLastNumberedPage,
+          maxAttempts: maxNavigationAttempts(onLastNumberedPage)
+        })
+      ).toEqual({ type: 'stop', complete: false, reason: 'navigation-failed' })
+    }
+  })
+
+  it('still confirms a genuine end with the reader present', () => {
+    expect(
+      shouldStopCapture({
+        observations: ['reader-lost', 'no-next-page', 'no-next-page'],
+        onLastNumberedPage: true,
+        maxAttempts: maxNavigationAttempts(true)
+      })
+    ).toEqual({ type: 'stop', complete: true, reason: 'end-of-book' })
   })
 })
 

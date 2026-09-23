@@ -297,12 +297,19 @@ public final class CaptureEngine {
         } else if navigated {
           observations.append(.navigated)
         } else {
-          let usable = await session.run(
-            ReaderScripts.usableChevron, ["selector": Self.nextChevronSelector], as: Bool.self)
-          observations.append(usable ?? true ? .stalled : .noNextPage)
-          // A method that didn't move a reader offering a next page: try the
-          // other one on the next attempt.
-          if observations.last == .stalled { preferredTurn = preferredTurn == .key ? .mouse : .key }
+          let result = try await classifyFailedTurn()
+          observations.append(result)
+          switch result {
+          case .signedOut:
+            info("Amazon signed the reader out (page \(currentPage))")
+          case .readerLost:
+            info("the reader is no longer showing the book (page \(currentPage))")
+          case .stalled:
+            // A method that didn't move a reader offering a next page: try
+            // the other one on the next attempt.
+            preferredTurn = preferredTurn == .key ? .mouse : .key
+          default: break
+          }
         }
 
         let action = try core.call(
@@ -345,6 +352,29 @@ public final class CaptureEngine {
     return final
   }
 
+  /// What a page turn that rendered nothing new ran into. A missing chevron
+  /// only means "last screen" while the reader is demonstrably still there,
+  /// so the page image and the footer are looked at again now — the footer
+  /// read before the turn says nothing about a reader that has since gone.
+  /// KindleCore makes the call (`navigationResult`).
+  private func classifyFailedTurn() async throws -> NavigationResult {
+    let signedOut = session.isOnSignIn
+    var evidence = NavigationEvidence(
+      navigated: false, signedOut: signedOut, pageImage: false, footerReadable: false,
+      nextPageUsable: false)
+    if !signedOut {
+      evidence.pageImage = await session.imageSource(Self.mainImageSelector) != nil
+      evidence.footerReadable = await readPageNav() != nil
+      // `nil` is a script that couldn't run (a navigation in flight): read
+      // as "still offered", which can only ever lead to a retry.
+      evidence.nextPageUsable =
+        await session.run(
+          ReaderScripts.usableChevron, ["selector": Self.nextChevronSelector], as: Bool.self)
+        ?? true
+    }
+    return try core.call("navigationResult", evidence, as: NavigationResult.self)
+  }
+
   private func emitProgress(page: Int) {
     onEvent?(
       .progress(
@@ -360,9 +390,18 @@ public final class CaptureEngine {
 
   // MARK: - reader lifecycle
 
-  /// Load the reader, handing sign-in to the handler if Amazon asks for it.
+  /// Load the reader, handing sign-in to the handler if Amazon asks for it —
+  /// at the start, and on every stall recovery, which is where a session that
+  /// expired mid-book turns up.
   private func openReader(timeout: TimeInterval) async throws {
     try await session.load(bookReaderURL, timeout: timeout)
+    // A session with no cookies is sent on to the landing page by a script
+    // after the load has finished, so the URL right now proves nothing yet:
+    // wait for the reader or a signed-out page, whichever comes first.
+    _ = try await session.waitFor(timeout: timeout, interval: 0.2) {
+      if self.session.isOnSignIn { return true }
+      return await self.session.exists(ElementSpec(Self.mainImageSelector, visible: false))
+    }
     if session.isOnSignIn {
       try await handleSignIn()
       if session.currentURL?.absoluteString.contains(bookReaderURL.absoluteString) != true {
@@ -375,6 +414,9 @@ public final class CaptureEngine {
     info("Amazon needs you to sign in. Complete sign-in in the reader window...")
     onEvent?(.needsSignIn)
     guard let signInHandler else { throw CaptureError.needsSignIn }
+    // The handler shows whatever page is there; on the landing page that
+    // would leave the person to find its sign-in button themselves.
+    await session.leaveLandingPage()
     do {
       try await signInHandler(session)
     } catch is CancellationError {
@@ -795,6 +837,15 @@ struct FooterPosition: Encodable {
 struct NavigationTimeoutInput: Encodable {
   var onLastNumberedPage: Bool
   var clickFailed: Bool
+}
+
+/// `NavigationEvidence`.
+struct NavigationEvidence: Encodable {
+  var navigated: Bool
+  var signedOut: Bool
+  var pageImage: Bool
+  var footerReadable: Bool
+  var nextPageUsable: Bool
 }
 
 struct StopCaptureInput: Encodable {

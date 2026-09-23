@@ -103,6 +103,8 @@ public enum NavigationResult: String, Codable, Sendable {
   case navigated
   case noNextPage = "no-next-page"
   case stalled
+  case readerLost = "reader-lost"
+  case signedOut = "signed-out"
 }
 
 /// The text files of one `/renderer/render` TAR, in the shape

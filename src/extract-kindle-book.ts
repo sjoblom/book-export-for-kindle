@@ -29,6 +29,7 @@ import {
   MAX_CAPTURE_RECOVERIES,
   maxNavigationAttempts,
   type NavigationResult,
+  navigationResult,
   navigationTimeoutMs,
   resumeScreenDecision,
   type ResumeState,
@@ -46,6 +47,7 @@ import {
   normalizePageNumber,
   pageForPosition
 } from './render-metadata'
+import { isSignedInUrl, SIGNED_OUT_PATH_REGEX } from './session'
 import {
   assert,
   extractTar,
@@ -358,6 +360,45 @@ export interface ExtractBookOptions {
 const MANUAL_SIGN_IN_TIMEOUT_MS = 5 * 60 * 1000
 
 /**
+ * Whether a URL is one of Amazon's signed-out pages: its sign-in form, the
+ * challenges that follow it (`/ap/cvf`, `/ap/mfa`, …), or the reader's own
+ * signed-out landing page, where a session with no Amazon cookies is sent.
+ *
+ * The paths are session.ts's, so the capture and the sign-in window agree on
+ * what "signed out" looks like; the host check keeps a book or library page
+ * that happens to have such a path from counting.
+ */
+export function isSignedOutUrl(url: string): boolean {
+  let parsed: URL
+  try {
+    parsed = new URL(url)
+  } catch {
+    return false
+  }
+
+  const onAmazon =
+    parsed.hostname === 'amazon.com' || parsed.hostname.endsWith('.amazon.com')
+  return (
+    onAmazon &&
+    (SIGNED_OUT_PATH_REGEX.test(parsed.pathname) ||
+      parsed.pathname.startsWith('/ap/'))
+  )
+}
+
+/** Whether a URL is the reader's signed-out landing page. */
+function isLandingUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url)
+    return (
+      parsed.hostname === 'read.amazon.com' &&
+      parsed.pathname.startsWith('/landing')
+    )
+  } catch {
+    return false
+  }
+}
+
+/**
  * Extract a single Kindle book using the given browser context.
  * Creates a new page for the extraction and closes it when done.
  */
@@ -568,15 +609,54 @@ export async function extractBook(
       )
     }
 
-    // Try going directly to the book reader page if we're already authenticated.
-    // Otherwise wait for the signin page to load.
-    await Promise.any([
-      page.goto(bookReaderUrl, { timeout: 30_000 }),
-      page.waitForURL('**/ap/signin', { timeout: 30_000 })
-    ])
+    const onSignedOutPage = (url: URL) => isSignedOutUrl(url.href)
 
-    // If we're on the signin page, start the authentication flow.
-    if (/\/ap\/signin/g.test(new URL(page.url()).pathname)) {
+    /**
+     * Load the book, and hand over to sign-in if Amazon wants one first —
+     * both when the capture starts and when a stall recovery reloads the
+     * reader, which is where an expired session shows up mid-book.
+     */
+    async function openReader(timeoutMs: number) {
+      await Promise.any([
+        page.goto(bookReaderUrl, { timeout: timeoutMs }),
+        page.waitForURL(onSignedOutPage, { timeout: timeoutMs })
+      ])
+
+      // A session with no cookies can be sent on to the landing page by a
+      // script after the load has finished, so the URL right after `goto`
+      // proves nothing yet: wait for the reader or a signed-out page,
+      // whichever shows up first.
+      await Promise.any([
+        page.waitForSelector(krRendererMainImageSelector, {
+          timeout: timeoutMs
+        }),
+        page.waitForURL(onSignedOutPage, { timeout: timeoutMs })
+      ]).catch(() => {})
+
+      if (!isSignedOutUrl(page.url())) return
+
+      await signIn()
+
+      if (!page.url().includes(bookReaderUrl)) {
+        await page.goto(bookReaderUrl, { timeout: timeoutMs })
+      }
+    }
+
+    async function signIn() {
+      // The landing page's "Sign in with your account" button leads to the
+      // sign-in form. Pressing it for the person saves them working out that
+      // it's the step they're missing, and puts the scripted path on the form
+      // it expects.
+      if (isLandingUrl(page.url())) {
+        await page
+          .locator('#top-sign-in-btn')
+          .click({ timeout: 10_000 })
+          .catch(() => {})
+        await page
+          .waitForURL((url) => !isLandingUrl(url.href), { timeout: 10_000 })
+          .catch(() => {})
+      }
+
       if (!amazonEmail || !amazonPassword) {
         // No stored credentials, so let the person sign in themselves in the
         // browser window that's already open. This is the default path: it
@@ -590,51 +670,52 @@ export async function extractBook(
         // to a window they can't see.
         await showBrowserWindow(page)
 
-        await page.waitForURL(
-          (url) => !/\/ap\/signin/.test(new URL(url).pathname),
-          { timeout: MANUAL_SIGN_IN_TIMEOUT_MS }
-        )
+        // Back on the reader, not merely off the sign-in form: Amazon's
+        // challenge pages (`/ap/cvf`, `/ap/mfa`) come after it and are still
+        // part of signing in.
+        await page.waitForURL((url) => isSignedInUrl(url.href), {
+          timeout: MANUAL_SIGN_IN_TIMEOUT_MS
+        })
 
         logInfo('Signed in.')
         if (hideWindow) {
           await hideBrowserWindow(page)
         }
-      } else {
-        await page.locator('input[type="email"]').fill(amazonEmail)
-        await page.locator('input[type="submit"]').click()
+        return
+      }
 
-        await page.locator('input[type="password"]').fill(amazonPassword)
-        // await page.locator('input[type="checkbox"]').click()
-        await page.locator('input[type="submit"]').click()
+      await page.locator('input[type="email"]').fill(amazonEmail)
+      await page.locator('input[type="submit"]').click()
 
-        // Only relevant to the scripted path — when signing in by hand, 2FA is
-        // dealt with in the browser rather than at the terminal.
-        if (!/\/kindle-library/g.test(new URL(page.url()).pathname)) {
-          const envOtpCode = otp?.trim() || getEnv('AMAZON_OTP')?.trim()
-          const code =
-            envOtpCode ||
-            (process.stdin.isTTY
-              ? await input({
-                  message: '2-factor auth code?'
-                })
-              : '')
+      await page.locator('input[type="password"]').fill(amazonPassword)
+      // await page.locator('input[type="checkbox"]').click()
+      await page.locator('input[type="submit"]').click()
 
-          // Only enter 2-factor auth code if needed
-          if (code) {
-            await page.locator('input[type="tel"]').fill(code)
-            await page
-              .locator(
-                'input[type="submit"][aria-labelledby="cvf-submit-otp-button-announce"]'
-              )
-              .click()
-          }
+      // Only relevant to the scripted path — when signing in by hand, 2FA is
+      // dealt with in the browser rather than at the terminal.
+      if (!/\/kindle-library/g.test(new URL(page.url()).pathname)) {
+        const envOtpCode = otp?.trim() || getEnv('AMAZON_OTP')?.trim()
+        const code =
+          envOtpCode ||
+          (process.stdin.isTTY
+            ? await input({
+                message: '2-factor auth code?'
+              })
+            : '')
+
+        // Only enter 2-factor auth code if needed
+        if (code) {
+          await page.locator('input[type="tel"]').fill(code)
+          await page
+            .locator(
+              'input[type="submit"][aria-labelledby="cvf-submit-otp-button-announce"]'
+            )
+            .click()
         }
       }
-
-      if (!page.url().includes(bookReaderUrl)) {
-        await page.goto(bookReaderUrl)
-      }
     }
+
+    await openReader(30_000)
 
     async function updateSettings() {
       await dismissReaderPopoverMenu()
@@ -932,6 +1013,25 @@ export async function extractBook(
       }
     }
 
+    /**
+     * The footer as it reads right now, allowing a moment for a re-render,
+     * or `undefined`. Bounded, unlike `getPageNav`, whose `textContent` waits
+     * out Playwright's default timeout when the footer isn't there at all —
+     * which is exactly the case this is asked about.
+     */
+    async function readFooterNow() {
+      for (let attempt = 0; attempt < 10; attempt++) {
+        const text = await page
+          .locator('ion-footer ion-title')
+          .first()
+          .textContent({ timeout: 200 })
+          .catch(() => null)
+        const nav = parsePageNav(text)
+        if (nav) return nav
+        await delay(200)
+      }
+    }
+
     async function getPageNav() {
       const footerText = await page
         .locator('ion-footer ion-title')
@@ -1086,7 +1186,9 @@ export async function extractBook(
       // would only crowd the new reader's blobs toward the size backstop.
       capturedBlobs.clear()
 
-      await page.goto(bookReaderUrl, { timeout: 60_000 })
+      // Through sign-in if need be: a session that expired mid-book is one of
+      // the ways the reader goes away.
+      await openReader(60_000)
       await page.waitForSelector(krRendererMainImageSelector, {
         timeout: 60_000
       })
@@ -1413,14 +1515,34 @@ export async function extractBook(
             ...Array.from({ length: maxAttempts }, () => 'stalled' as const)
           )
           simulatedStallDone = true
-        } else
+        } else if (navigatedToNextPage) {
+          observations.push('navigated')
+        } else {
+          // A missing chevron only means "last screen" if the reader is still
+          // there to have one; the footer is read again now, since the one
+          // from before the turn says nothing about a reader that has gone.
+          const url = page.url()
+          const signedOut = isSignedOutUrl(url)
           observations.push(
-            navigatedToNextPage
-              ? 'navigated'
-              : (await hasUsableNextPageChevron())
-                ? 'stalled'
-                : 'no-next-page'
+            navigationResult({
+              navigated: false,
+              signedOut,
+              pageImage:
+                !signedOut &&
+                (await page
+                  .locator(krRendererMainImageSelector)
+                  .count()
+                  .catch(() => 0)) > 0,
+              footerReadable: !signedOut && !!(await readFooterNow()),
+              nextPageUsable: !signedOut && (await hasUsableNextPageChevron())
+            })
           )
+          if (observations.at(-1) === 'signed-out') {
+            warnInfo(`Amazon signed the reader out mid-book (${url})`)
+          } else if (observations.at(-1) === 'reader-lost') {
+            warnInfo('the reader is no longer showing the book')
+          }
+        }
         const action = shouldStopCapture({
           observations,
           onLastNumberedPage,

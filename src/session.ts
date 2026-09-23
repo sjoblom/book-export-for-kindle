@@ -33,8 +33,14 @@ const REDIRECT_SETTLE_MS = 1500
  */
 const SIGNED_IN_POLLS_NEEDED = 2
 
-/** Paths on read.amazon.com that mean nobody is signed in. */
-export const SIGNED_OUT_PATH_REGEX = /\/ap\/signin|\/gp\/signin|^\/landing/
+/**
+ * Paths on read.amazon.com that mean nobody is signed in: the sign-in form,
+ * any other step of Amazon's sign-in (`/ap/cvf` challenges, `/ap/mfa`), and
+ * the landing page a session without cookies is sent to. The native app's
+ * AmazonURLs uses the same rule; keep the two in step.
+ */
+export const SIGNED_OUT_PATH_REGEX =
+  /^\/ap\/|\/ap\/signin|\/gp\/signin|^\/landing/
 
 /**
  * Whether a URL shows a signed-in Kindle session.

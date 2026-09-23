@@ -98,6 +98,48 @@ final class CaptureCoreTests: XCTestCase {
     XCTAssertEqual(lost.type, "lost-place")
   }
 
+  /// The reader going away mid-book (a sign-in redirect, an unloaded page)
+  /// takes the chevron with it; that must read as a stall to recover from,
+  /// never as the confirmed end of the book.
+  func testALostReaderIsNeverTheEndOfTheBook() throws {
+    func classify(
+      signedOut: Bool = false, pageImage: Bool = true, footerReadable: Bool = true,
+      nextPageUsable: Bool = false
+    ) throws -> NavigationResult {
+      try core.call(
+        "navigationResult",
+        NavigationEvidence(
+          navigated: false, signedOut: signedOut, pageImage: pageImage,
+          footerReadable: footerReadable, nextPageUsable: nextPageUsable),
+        as: NavigationResult.self)
+    }
+    XCTAssertEqual(try classify(), .noNextPage)
+    XCTAssertEqual(try classify(nextPageUsable: true), .stalled)
+    XCTAssertEqual(try classify(pageImage: false), .readerLost)
+    XCTAssertEqual(try classify(footerReadable: false), .readerLost)
+    XCTAssertEqual(
+      try classify(signedOut: true, pageImage: false, footerReadable: false), .signedOut)
+
+    let lost = try core.call(
+      "shouldStopCapture",
+      StopCaptureInput(
+        observations: Array(repeating: .readerLost, count: 5), onLastNumberedPage: false,
+        maxAttempts: 5),
+      as: CaptureAction.self)
+    XCTAssertEqual(lost.type, "stop")
+    XCTAssertEqual(lost.complete, false)
+    XCTAssertEqual(lost.reason, "navigation-failed")
+    XCTAssertTrue(try core.call("isStall", lost.reason, as: Bool.self))
+
+    let signedOut = try core.call(
+      "shouldStopCapture",
+      StopCaptureInput(observations: [.signedOut], onLastNumberedPage: false, maxAttempts: 5),
+      as: CaptureAction.self)
+    XCTAssertEqual(signedOut.type, "stop")
+    XCTAssertEqual(signedOut.complete, false)
+    XCTAssertEqual(signedOut.reason, "navigation-failed")
+  }
+
   /// A render TAR built in the test, through `RenderFiles(tar:)` and
   /// `buildBookMetadata`, into the metadata document the engine writes.
   func testBuildMetadataFromARenderTar() throws {

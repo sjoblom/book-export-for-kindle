@@ -17,6 +17,8 @@ import {
   isStall,
   maxNavigationAttempts,
   type NavigationAttemptInput,
+  type NavigationEvidence,
+  navigationResult,
   navigationTimeoutMs,
   type RecoveryInput,
   resumeScreenDecision,
@@ -129,6 +131,10 @@ const KindleCore = {
     totalContentPages: number
   }) {
     return shouldStopBeforeCapture(input) ?? null
+  },
+
+  navigationResult(input: NavigationEvidence) {
+    return navigationResult(input)
   },
 
   shouldStopCapture(input: NavigationAttemptInput) {

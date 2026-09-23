@@ -202,7 +202,7 @@ final class LandingSignInScriptTests: XCTestCase {
         querySelectorAll: function () { return [] }
       };
       """)
-    let result = context.evaluateScript(NativeBackend.followLandingSignIn)
+    let result = context.evaluateScript(ReaderSession.landingSignInButton)
     XCTAssertNil(context.exception)
     XCTAssertEqual(result?.toBool(), true)
     XCTAssertEqual(context.evaluateScript("clicked")?.toInt32(), 1)

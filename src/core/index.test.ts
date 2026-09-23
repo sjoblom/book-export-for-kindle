@@ -247,6 +247,17 @@ describe('kindle-core.js', () => {
           })
         ).toEqual({ type: 'stop', complete: false, reason: 'no-page-nav' })
       },
+      navigationResult: () => {
+        expect(
+          core.call('navigationResult', {
+            navigated: false,
+            signedOut: false,
+            pageImage: false,
+            footerReadable: true,
+            nextPageUsable: false
+          })
+        ).toBe('reader-lost')
+      },
       shouldStopCapture: () => {
         expect(
           core.call('shouldStopCapture', {
