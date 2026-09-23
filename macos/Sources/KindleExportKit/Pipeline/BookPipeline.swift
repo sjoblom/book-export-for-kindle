@@ -118,18 +118,23 @@ public actor BookPipeline {
   private let recognizer: PageRecognizer?
   private let makeCore: @Sendable () throws -> PipelineCore
   private let lockProbes: BookLock.Probes
+  /// Who holds the book lock, as the next run's "busy" message names it
+  /// ("app all", "kindle-export capture").
+  private let ownerName: String
   private var core: PipelineCore?
 
   /// - Parameters:
   ///   - capture: `nil` when this pipeline never captures (pages must exist).
   ///   - recognizer: `nil` for Vision with the run's languages/concurrency.
   ///   - makeCore: KindleCore for the pipeline and each transcription.
+  ///   - ownerName: names this program in the book lock.
   public init(
     outDir: URL, capture: Capture? = nil, recognizer: PageRecognizer? = nil,
     makeCore: @escaping @Sendable () throws -> PipelineCore = { try PipelineCore() },
-    lockProbes: BookLock.Probes = .system
+    lockProbes: BookLock.Probes = .system, ownerName: String = "app"
   ) {
     self.outDir = outDir
+    self.ownerName = ownerName
     self.capture = capture
     self.recognizer = recognizer
     self.makeCore = makeCore
@@ -149,7 +154,8 @@ public actor BookPipeline {
   {
     let store = BookStore(outDir: outDir, asin: asin)
     return try await BookLock.withLock(
-      bookDir: store.bookDir, command: "app \(options.command.rawValue)", probes: lockProbes
+      bookDir: store.bookDir, command: "\(ownerName) \(options.command.rawValue)",
+      probes: lockProbes
     ) {
       try await processLocked(store: store, options: options, emit: emit)
     }

@@ -34,6 +34,15 @@ public final class NativeBackend: NSObject, AppBackend {
 
   public let session: ReaderSession
   public let outDir: URL
+  /// Names this program in book locks (`BookPipeline.ownerName`).
+  public let ownerName: String
+  /// Said on the book's events when a capture stops for Amazon's sign-in —
+  /// where to look for the page depends on who is showing it.
+  public var signInNotice = "Amazon needs you to sign in — its sign-in page is shown in the app window"
+  /// Whether a capture may stop to show Amazon's sign-in. The command-line
+  /// tool turns it off when nobody is at a terminal to notice the window, so
+  /// the book fails at once instead of waiting ten minutes for a person.
+  public var allowsSignIn = true
   /// Diagnostics (stderr by default).
   public var log: (String) -> Void = { line in
     FileHandle.standardError.write(Data("[kindle-export] \(line)\n".utf8))
@@ -57,15 +66,16 @@ public final class NativeBackend: NSObject, AppBackend {
     capture: { [weak self] asin, store in
       guard let self else { throw CancellationError() }
       try await self.capture(asin: asin, outDir: store.outDir)
-    })
+    }, ownerName: ownerName)
 
   /// Where a running book's events go, for what the capture itself has to say.
   private var currentEmit: (@MainActor @Sendable (PipelineEvent) -> Void)?
   public private(set) var signingIn = false
   private var signInCancelled = false
 
-  public init(outDir: URL, session: ReaderSession? = nil) {
+  public init(outDir: URL, session: ReaderSession? = nil, ownerName: String = "app") {
     self.outDir = outDir
+    self.ownerName = ownerName
     self.session = session ?? ReaderSession()
     super.init()
     self.session.log = { [weak self] line in self?.log("reader: \(line)") }
@@ -173,6 +183,11 @@ public final class NativeBackend: NSObject, AppBackend {
   static let redirectSettleNanoseconds: UInt64 = 1_500_000_000
 
   public func fetchLibrary() async throws -> [LibraryBook] {
+    try await fetchLibrary(limit: nil)
+  }
+
+  /// The library, stopping after `limit` books (the CLI's `list --limit`).
+  public func fetchLibrary(limit: Int?) async throws -> [LibraryBook] {
     park()
     try await session.load(Self.libraryURL)
     // A signed-out session lands on the library page first and is sent on to
@@ -187,9 +202,10 @@ public final class NativeBackend: NSObject, AppBackend {
     let service = libraryService!
     let webView = session.webView
     do {
-      return try await service.fetchLibrary(evaluate: { script in
-        try await Self.callAsync(script, in: webView, timeout: Self.libraryScriptTimeout)
-      })
+      return try await service.fetchLibrary(
+        evaluate: { script in
+          try await Self.callAsync(script, in: webView, timeout: Self.libraryScriptTimeout)
+        }, limit: limit)
     } catch let error as LibraryService.LibraryError {
       throw error
     } catch {
@@ -267,12 +283,11 @@ public final class NativeBackend: NSObject, AppBackend {
       case .progress:
         break  // BookPipeline reads progress back from metadata.json.
       case .needsSignIn:
-        self.currentEmit?(
-          .info("Amazon needs you to sign in — its sign-in page is shown in the app window"))
+        self.currentEmit?(.info(self.signInNotice))
       }
     }
     engine.signInHandler = { [weak self] _ in
-      guard let self, await self.waitForSignIn() else {
+      guard let self, self.allowsSignIn, await self.waitForSignIn() else {
         throw CaptureEngine.CaptureError.needsSignIn
       }
     }

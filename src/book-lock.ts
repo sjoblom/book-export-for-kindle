@@ -110,9 +110,11 @@ type Probes = Required<Pick<BookLockOptions, 'isAlive' | 'commandLine'>>
  * Whether the process behind an owner file is still one of ours.
  *
  * Every run of this tool is a Node process, the native app (`Kindle
- * Export.app`, or `KindleExport` when run unbundled) or its `kexport`
- * developer tool, which all share this lock, so a live pid running something
- * else is a recycled pid. An unreadable command line stays "ours": there is a
+ * Export.app`, or `KindleExport` when run unbundled), the native command-line
+ * tool (`kindle-export`, run from inside the app bundle or `.build/`) or the
+ * `kexport` developer tool it replaced (older checkouts may still run it),
+ * which all share this lock, so a live pid running something else is a
+ * recycled pid. An unreadable command line stays "ours": there is a
  * live process and no evidence against it. BookLock.swift keeps the same
  * pattern.
  */

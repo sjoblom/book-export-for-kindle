@@ -458,6 +458,17 @@ describe('locks taken by the native app and kexport', () => {
     expect(await lockExists()).toBe(false)
   })
 
+  it('treats a live native command-line tool as the owner', async () => {
+    await plantSwiftLock(process.pid, 'kindle-export all')
+    const thrown = await withBookLock(bookDir, async () => 'entered', {
+      commandLine: async () =>
+        '/Applications/Kindle Export.app/Contents/MacOS/kindle-export B00X'
+    }).catch((err: unknown) => err)
+
+    expect(isBookBusyError(thrown)).toBe(true)
+    expect(String(thrown)).toContain('(kindle-export all)')
+  })
+
   it('treats a live native app as the owner', async () => {
     await plantSwiftLock(process.pid, 'app all')
     const thrown = await withBookLock(bookDir, async () => 'entered', {
@@ -485,6 +496,15 @@ describe('ownerLooksLive', () => {
     expect(
       ownerLooksLive('macos/.build/debug/kexport capture B00X --out out')
     ).toBe(true)
+    // The native command-line tool: re-executed from inside the app bundle,
+    // before that as its PATH link, and as a development build.
+    expect(
+      ownerLooksLive(
+        '/Applications/Kindle Export.app/Contents/MacOS/kindle-export B00X'
+      )
+    ).toBe(true)
+    expect(ownerLooksLive('/usr/local/bin/kindle-export list')).toBe(true)
+    expect(ownerLooksLive('macos/.build/release/kindle-export B00X')).toBe(true)
   })
 
   it('treats an unreadable command line as live', () => {

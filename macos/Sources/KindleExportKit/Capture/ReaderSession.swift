@@ -111,6 +111,10 @@ public final class ReaderSession: NSObject {
         !forceSliver && ReaderSession.disableWindowOcclusionDetection(webView) ? .offscreen : .sliver
       hostWindow = host
     } else {
+      // A window someone can see (the CLI's --show) may still be covered by
+      // other windows, and a covered web view stops rendering just like an
+      // off-screen one.
+      _ = ReaderSession.disableWindowOcclusionDetection(webView)
       hostWindow = window!
     }
     hostView = NSView(frame: NSRect(origin: .zero, size: ReaderSession.viewportSize))
@@ -135,8 +139,8 @@ public final class ReaderSession: NSObject {
   // MARK: - window
 
   /// Bring the host window forward — for signing in, when the host is an
-  /// ordinary titled window (kexport). The app shows sign-in with
-  /// `present(in:)` instead.
+  /// ordinary titled window (`kindle-export --show`). The app shows sign-in
+  /// with `present(in:)` instead.
   public func show() {
     if hostWindow.isMiniaturized { hostWindow.deminiaturize(nil) }
     hostWindow.makeKeyAndOrderFront(nil)
@@ -144,7 +148,7 @@ public final class ReaderSession: NSObject {
   }
 
   /// Park a titled host window in the Dock so nobody clicks into a running
-  /// capture (kexport).
+  /// capture.
   public func minimize() {
     if !hostWindow.isVisible { hostWindow.orderFront(nil) }
     hostWindow.miniaturize(nil)

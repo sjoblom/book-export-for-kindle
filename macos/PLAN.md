@@ -1,8 +1,11 @@
 # Native macOS app — plan and contracts
 
-Goal: `Kindle Export.app` without Node and without Chrome, ~5–10 MB. The
-terminal tool (`kindle-export`, Node + patchright) stays as it is and shares the
-same pure logic and the same on-disk formats.
+Goal: `Kindle Export.app` without Node and without Chrome, ~5–10 MB, with a
+native `kindle-export` command-line tool inside it (see "Command-line tool"
+below). Decision (September 2026): macOS only for now — the Swift engine is
+the product. The Node + patchright CLI (src/cli.ts) is a legacy fallback, the
+only option off macOS, and gets fixes only; it shares the same pure logic and
+the same on-disk formats.
 
 A spike (September 2026) proved the risky part: Kindle Cloud Reader runs in a
 `WKWebView`; page images arrive through a `URL.createObjectURL` user-script
@@ -28,6 +31,10 @@ macos/
                         PdfRenderer, LibraryService                (wave 1: pipeline)
     App/                AppModel (queue/state), Bridge             (wave 2)
   Sources/KindleExport/ main.swift, windows, menus                 (wave 2)
+  Sources/KindleExportCLI/ the `kindle-export` product: main.swift (re-exec,
+                        parse), Runner (commands, windows, Ctrl-C)
+  Sources/KindleExportKit/CLI/ its pure parts: CommandLineOptions (parse, help,
+                        version), CommandLineOutput, CommandLineTool (PATH link)
   Tests/KindleExportKitTests/
 ```
 
@@ -167,3 +174,75 @@ BlobStore's age limit (8 consumptions, as extract-kindle-book.ts) aged it out
 and failed every capture at screen 10. The default is now 32 (bounded by
 `maxCount` 64).
 
+## Command-line tool (`kindle-export`, September 2026)
+
+The terminal side of the app, on the same engine, so a Mac needs neither Node
+nor Chrome for the terminal either. Commands and flags follow src/cli.ts
+(`kindle-export [ASIN...]`, `login`, `list [--json] [--limit n]`, `clean`,
+`capture|ocr|export <ASIN...>`, `--out-dir`, `--format`, `--force*`,
+`--keep-pages`, `--concurrency`), plus `--show`; there is no `--model` (Vision
+only), `serve` or `setup`. Books go to `~/Documents/Kindle Export`, the app's
+folder, so the two share books (the book lock keeps them off the same book).
+Book work is `NativeBackend.processBook` (capture) or a `BookPipeline` with no
+capture (`ocr`, `export`), exactly as the app runs it; exit 1 when a book
+failed or `BookResult.fellShort`, 130 after Ctrl-C (first press cancels:
+capture records `interrupted`, the lock is released; a second quits).
+
+**Sharing the app's Amazon session.** `WKWebsiteDataStore.default()` is per
+app: WebKit names it after `Bundle.main.bundleIdentifier`, or the process
+name when there is none (~/Library/HTTPStorages/<id>.binarycookies,
+~/Library/WebKit/<id>). Measured:
+
+- An unbundled binary (`.build/debug/kindle-export`) gets a store of its own,
+  named `kindle-export` — signed out.
+- Setting `ProcessInfo.processName` (and `setprogname`) to the app's
+  identifier before WebKit starts does not help: cookies still went to
+  `<process>.binarycookies`.
+- A binary in the bundle's `Contents/MacOS` (next to the app's executable,
+  whatever its name) has `Bundle.main` = the app, and sees the app's cookies:
+  `list` read the signed-in library, with the app running at the same time.
+- Started through a symlink (the PATH link), `Bundle.main` is worked out from
+  the link's path and is *not* the app (bundleIdentifier nil, bundlePath the
+  link's folder). So the tool re-executes itself from `realpath` of
+  `_NSGetExecutablePath` (argv[0] set to the real path too, which is what the
+  book lock's `ps` check sees). The package script's smoke test checks this
+  (`KINDLE_EXPORT_DEBUG=1` prints the bundle).
+- `Contents/Helpers` would not do: CFBundle doesn't treat it as the bundle's.
+- `WKWebsiteDataStore(forIdentifier:)` (macOS 14+) with a shared UUID would
+  also work, but every existing app sign-in would be lost once and the app
+  would need macOS 14.
+
+Consequences of running as the app: LaunchServices registers the tool as a
+(UIElement) instance of Kindle Export, so while it runs, opening the app from
+Finder or the Dock would only reopen the tool; the tool answers the reopen
+by launching a new instance of the app (`createsNewApplicationInstance`).
+`osascript -e 'quit app "Kindle Export"'` may reach the tool, which treats it
+as Ctrl-C. Two processes using the same data store at once works (measured),
+but the app and a capturing tool would both drive the same Amazon reading
+session — quit one while the other captures.
+
+**Windows.** Activation policy `.accessory`: no Dock icon, no focus taken. The
+reader lives in the same invisible `ReaderHostWindow` as the app's; `--show`
+gives it an ordinary window instead (occlusion detection off, so covering it
+doesn't stop the capture). Amazon's sign-in (`login`, a signed-out `list` or
+picker at a terminal, or mid-capture via `NativeBackend.waitForSignIn`) moves
+the web view into a window with the app's `SignInView`, switching to
+`.regular` while it shows and giving focus back to the terminal afterwards.
+Without a TTY on stdin, `NativeBackend.allowsSignIn` is off and a needed
+sign-in fails the book at once. `ocr`, `export` and `clean` never start
+AppKit.
+
+**Install.** The app menu's "Install Command-Line Tool…" links
+`/usr/local/bin/kindle-export` (or `~/.local/bin` when that needs an
+administrator) to `Contents/MacOS/kindle-export`; a link rather than a copy,
+because the tool must run from inside the bundle. It replaces only links into
+some `*.app/Contents/MacOS/kindle-export` (a moved app), never anything else
+(the Node tool's npm link), and never runs sudo — it shows the line to paste.
+"Uninstall…" removes only such links. `--version` is Info.plist's when bundled,
+else `CommandLineOptions.version`; the package script fails when that differs
+from package.json.
+
+Measured on "How to Live" (B09Y7P4DR6), run through a symlink with the app
+quit and stdin not a terminal: 210 screens, capture complete (end-of-book,
+page 115 of 116), Vision OCR of 210 pages, Markdown written, 3 min 17 s, exit
+0 — the Markdown byte-identical to the app's export of the same book.

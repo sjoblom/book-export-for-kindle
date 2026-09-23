@@ -21,6 +21,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
   private var signInView: SignInView!
   /// The page currently shown, when it is the real UI (not an error page).
   private var pageURL: URL?
+  private let commandLineTool = CommandLineToolMenu()
 
   func applicationDidFinishLaunching(_: Notification) {
     try? FileManager.default.createDirectory(
@@ -288,6 +289,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
     appMenu.addItem(
       withTitle: "Show Books in Finder", action: #selector(showBooks), keyEquivalent: "b"
     ).target = self
+    appMenu.addItem(NSMenuItem.separator())
+    commandLineTool.addItems(to: appMenu)
     appMenu.addItem(NSMenuItem.separator())
     appMenu.addItem(
       withTitle: "Hide Kindle Export", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")

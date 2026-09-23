@@ -244,6 +244,11 @@ final class PipelineLockTests: XCTestCase {
     XCTAssertTrue(BookLock.ownerLooksLive("/Applications/Kindle Export.app/Contents/MacOS/x"))
     XCTAssertTrue(BookLock.ownerLooksLive(".build/debug/KindleExport"))
     XCTAssertTrue(BookLock.ownerLooksLive(".build/debug/kexport capture B00X --out out"))
+    // The native command-line tool, as each of the ways it runs looks to ps.
+    XCTAssertTrue(
+      BookLock.ownerLooksLive("/Applications/Kindle Export.app/Contents/MacOS/kindle-export B00X"))
+    XCTAssertTrue(BookLock.ownerLooksLive("/usr/local/bin/kindle-export list"))
+    XCTAssertTrue(BookLock.ownerLooksLive(".build/release/kindle-export B00X"))
     XCTAssertFalse(BookLock.ownerLooksLive("/usr/bin/vim"))
   }
 }

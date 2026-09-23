@@ -66,7 +66,9 @@ public enum BookLock {
 
   /// book-lock.ts `ownerLooksLive`, the same pattern: every program that
   /// takes this lock — Node, the app (`Kindle Export`, or `KindleExport`
-  /// outside a bundle) and the `kexport` developer tool. A live owner that
+  /// outside a bundle), the native `kindle-export` tool (from inside the
+  /// bundle, its PATH link or `.build/`) and the `kexport` developer tool it
+  /// replaced, which older checkouts may still run. A live owner that
   /// matches none of them is a recycled pid, so leaving one out would let its
   /// lock be taken from under it.
   public static func ownerLooksLive(_ commandLine: String?) -> Bool {
