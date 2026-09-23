@@ -59,28 +59,38 @@ Everything the CLI can do beyond this (per-stage commands, `--force`,
 cleanup) still works from the terminal; the two share one pipeline and
 one on-disk state, so you can mix them freely.
 
-### A double-clickable app
+### A double-clickable Mac app
 
 For someone who shouldn't have to see a terminal at all, `pnpm package` builds
-`Kindle Export.app` — a self-contained bundle with its own Node runtime, so
-the Mac it runs on needs nothing installed except Google Chrome:
+`Kindle Export.app` — a native Mac app of a few megabytes that needs nothing
+else installed: no Node, no Chrome, no API key. It runs on macOS 13 or later.
 
 ```bash
-pnpm package
+pnpm package                  # this Mac's architecture
+ARCH=universal pnpm package   # Apple silicon and Intel in one app (needs Xcode)
 ```
 
-It lands in `dist-app/`. Copy it to the other Mac's `/Applications`, then
-right-click → **Open** → **Open** once — it isn't notarised, so the first
-launch needs that; afterwards it opens with a normal double-click. The web app
-opens in the app's own window rather than a browser tab, downloads land in
-`~/Downloads`, and books are written to `~/Documents/Kindle Export`. Closing the
-window or choosing **Quit** stops the server properly rather than leaving it
-holding the port, and asks first if a book is still being exported. Amazon
-sign-in and page capture still happen in a separate Chrome window, which the
-capture drives by itself.
+Building it needs this repo's dev setup (Node and pnpm, plus Xcode or its
+command line tools); the app it produces needs none of it. It lands in
+`dist-app/`. Copy it to the other Mac's `/Applications`, then right-click →
+**Open** → **Open** once — it is signed ad hoc, not notarised, so the first
+launch needs that; afterwards it opens with a normal double-click.
 
-If something goes wrong at startup it says so and points at
-`~/Library/Logs/Kindle Export.log`.
+It shows the same page as `kindle-export serve`, in its own window. Amazon
+sign-in happens in a second window inside the app (sign in there as you always
+do; it stays signed in between launches), and the same window turns the pages
+during a capture, out of the way. Pages are read with Apple's Vision framework
+on the Mac itself. Books are written to `~/Documents/Kindle Export`, and
+**Download** saves a copy to `~/Downloads` and shows it in Finder. Quitting
+while a book is being exported asks first.
+
+Under the hood the app is Swift (WebKit for the reader and the page, Vision for
+the text, JavaScriptCore for the rest): the logic that turns captured pages
+into a book — table of contents, page numbering, paragraph reconstruction,
+Markdown and PDF layout — is the same TypeScript the CLI runs, bundled into
+`kindle-core.js` and evaluated in JavaScriptCore, so both write identical files
+and can finish each other's books. See [`macos/PLAN.md`](macos/PLAN.md) for the
+design and the page ↔ app bridge.
 
 ## How it works
 

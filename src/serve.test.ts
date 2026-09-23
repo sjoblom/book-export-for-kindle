@@ -11,6 +11,7 @@ import type * as ExtractKindleBook from './extract-kindle-book'
 import type * as KindleLibrary from './kindle-library'
 import type { LibraryBook } from './kindle-library'
 import type * as Pipeline from './pipeline'
+import { renderPage } from './serve-page'
 
 // The server reads and writes the stored config; the real one lives in the
 // home directory of whoever runs the tests.
@@ -571,6 +572,129 @@ describe('serve', () => {
   it('stays quiet about unknown routes', async () => {
     const res = await fetch(handle.url + '/api/nope')
     expect(res.status).toBe(404)
+  })
+})
+
+function pageScript(html: string): string {
+  const script = /<script>([\s\S]*)<\/script>/.exec(html)?.[1]
+  expect(script).toBeTruthy()
+  return script!
+}
+
+/**
+ * Just enough DOM for the page script to load and run its first calls: every
+ * element is the same do-nothing object, so what the test sees is only what
+ * crosses the bridge.
+ */
+function fakeBrowser() {
+  const element: any = new Proxy(function () {}, {
+    get: (_target, key) => {
+      if (key === Symbol.toPrimitive) return () => ''
+      if (key === 'children') return []
+      if (key === 'hidden') return true
+      if (key === 'value' || key === 'textContent') return ''
+      return element
+    },
+    set: () => true,
+    apply: () => element
+  })
+  const messages: any[] = []
+  const window: any = {
+    webkit: {
+      messageHandlers: { kindle: { postMessage: (m: any) => messages.push(m) } }
+    }
+  }
+  const context = vm.createContext({
+    window,
+    document: element,
+    setTimeout,
+    clearTimeout,
+    setInterval: () => 0,
+    Promise
+  })
+  return { context, window, messages }
+}
+
+describe('page transport', () => {
+  // These tests need no server, but the file-wide hooks start one; let its
+  // start-up library read finish before the teardown removes its folder.
+  beforeEach(async () => {
+    await idle()
+  })
+
+  it('http mode is the default and parses', () => {
+    expect(renderPage()).toBe(renderPage({ transport: 'http' }))
+    const script = pageScript(renderPage())
+    expect(() => new vm.Script(script)).not.toThrow()
+    expect(script).toContain("new EventSource('/api/events')")
+    expect(script).toContain("'x-kindle-export': '1'")
+    expect(script).not.toContain('messageHandlers')
+  })
+
+  it('bridge mode parses and never touches HTTP', () => {
+    const html = renderPage({ transport: 'bridge' })
+    const script = pageScript(html)
+    expect(() => new vm.Script(script)).not.toThrow()
+    expect(script).not.toContain('EventSource')
+    expect(script).not.toMatch(/\bfetch\(/)
+    expect(script).toContain('window.webkit.messageHandlers.kindle')
+    // Loaded from a file, the page has no server: any relative URL in an
+    // attribute (src, href, action) would resolve to nothing.
+    const urls = [
+      ...html.matchAll(/(?<![\w-])(?:src|href|action)=["']([^"']*)/g)
+    ].map((m) => m[1])
+    for (const url of urls) expect(url).toMatch(/^(data:|https:)/)
+  })
+
+  it('bridge mode sends requests and settles them from replies', async () => {
+    const { context, window, messages } = fakeBrowser()
+    new vm.Script(pageScript(renderPage({ transport: 'bridge' }))).runInContext(
+      context
+    )
+
+    // The page asks for the state (with a disk scan) as soon as it loads.
+    expect(messages).toEqual([
+      { id: '1', method: 'GET', path: '/api/state?scan=1' }
+    ])
+    expect(typeof window.__kindleState).toBe('function')
+
+    const reply = vm.runInContext(
+      "request('POST', '/api/export', { asin: 'B00TEST' })",
+      context
+    )
+    expect(messages[1]).toEqual({
+      id: '2',
+      method: 'POST',
+      path: '/api/export',
+      body: { asin: 'B00TEST' }
+    })
+    window.__kindleReply('2', 200, '{"ok":true}')
+    await expect(reply).resolves.toEqual({ ok: true })
+
+    const failed = vm.runInContext(
+      "request('POST', '/api/queue/stop')",
+      context
+    )
+    window.__kindleReply(messages[2].id, 409, { error: 'Nothing to stop.' })
+    await expect(failed).rejects.toThrow('Nothing to stop.')
+  })
+
+  it('bridge mode gives up on a request the app never answers', async () => {
+    vi.useFakeTimers()
+    try {
+      const { context } = fakeBrowser()
+      context.setTimeout = setTimeout
+      context.clearTimeout = clearTimeout
+      new vm.Script(
+        pageScript(renderPage({ transport: 'bridge' }))
+      ).runInContext(context)
+      const reply = vm.runInContext("request('POST', '/api/library')", context)
+      const settled = expect(reply).rejects.toThrow('did not answer')
+      await vi.advanceTimersByTimeAsync(30_000)
+      await settled
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
 

@@ -29,8 +29,9 @@ jobs:
 
       - run: pnpm build
 
-  # The Vision OCR tests and the app bundle only exist on macOS, and both are
-  # the parts a Linux-only CI cannot say anything about.
+  # The native app (macos/), the Vision OCR worker the CLI uses on macOS, and
+  # the app bundle only exist on macOS — the parts a Linux-only CI cannot say
+  # anything about.
   macos:
     runs-on: macos-latest
 
@@ -49,16 +50,32 @@ jobs:
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
           PATCHRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
 
-      # The vision tests skip themselves unless bin/kindle-ocr-macos exists, so
-      # build the worker first or this job would quietly test nothing extra.
-      - run: pnpm build:ocr
+      # Before the tests: the CLI's Vision tests skip themselves unless
+      # bin/kindle-ocr-macos exists, and the Swift tests load
+      # dist-core/kindle-core.js — without a build both would quietly test less.
+      - run: pnpm build
 
       - run: test -x bin/kindle-ocr-macos
 
+      - run: test -s dist-core/kindle-core.js && test -s dist-core/app.html
+
       - run: pnpm test
 
-      - run: pnpm build
+      - run: swift test --package-path macos
 
-      # Packaging stages dependencies from the lockfile for the target CPU and
-      # smoke-tests the result with the bundled Node before it finishes.
+      # Builds the Swift app in release mode, assembles and signs the bundle,
+      # and checks it links only system libraries.
       - run: pnpm package
+
+      # The native app's reason to exist is being small and self-contained; a
+      # Node runtime or node_modules sneaking back in shows up here first.
+      - name: Check the bundle
+        run: |
+          APP="dist-app/Kindle Export.app"
+          KB="$(du -sk "$APP" | cut -f1)"
+          echo "bundle: $((KB / 1024)) MB"
+          test "$KB" -lt $((30 * 1024))
+          if find "$APP" \( -name node -o -name node_modules \) | grep .; then
+            echo "the app bundle contains Node" >&2
+            exit 1
+          fi

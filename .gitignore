@@ -34,3 +34,6 @@ coverage/
 # native app
 macos/.build/
 dist-core/
+
+# Tool caches
+.eslintcache

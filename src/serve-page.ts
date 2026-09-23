@@ -10,10 +10,179 @@
  * lives inside one TypeScript template string, and nested backticks are a
  * silent way to break it. DOM nodes are built with a small helper instead,
  * which also means book titles are always set via textContent, never HTML.
+ *
+ * The same page runs inside the native Mac app, loaded from a file, where it
+ * reaches the app through a WebKit message handler instead of HTTP — hence the
+ * transport option below. Nothing in it may depend on a relative URL: under a
+ * file:// origin those resolve to nothing.
  */
-export function renderPage(): string {
-  return PAGE
+export type PageTransport = 'http' | 'bridge'
+
+export interface RenderPageOptions {
+  /**
+   * How the page talks to its backend. `http` (the default) is
+   * `kindle-export serve`: fetch + server-sent events against the local
+   * server. `bridge` is the native Mac app, where the page is loaded from a
+   * file and every call goes through a WKScriptMessageHandler instead — see
+   * macos/PLAN.md, "Page ↔ Swift bridge". The API vocabulary (routes, bodies,
+   * status codes) is the same either way; only the carrier differs.
+   */
+  transport?: PageTransport
 }
+
+export function renderPage(options: RenderPageOptions = {}): string {
+  const transport =
+    options.transport === 'bridge' ? BRIDGE_TRANSPORT : HTTP_TRANSPORT
+  // split/join rather than replace(): replace() would interpret `$` patterns
+  // in the inserted script.
+  return PAGE.split('/*TRANSPORT*/').join(transport)
+}
+
+/*
+ * The transport layer. Each variant defines the same five functions, and the
+ * rest of the page only ever calls these:
+ *   request(method, path, body) → Promise of the JSON reply; rejects with an
+ *     Error whose message is fit for a toast
+ *   api(path, body)             → a POST through request()
+ *   reload(scan)                → fetch the whole state once and render it
+ *   listenForState()            → start receiving state pushes
+ *   downloadControl(attrs, asin, name) → the element for a Download action
+ * Only the selected variant is emitted, so the app's page carries no fetch or
+ * EventSource at all and the browser page no bridge hooks.
+ */
+
+const HTTP_TRANSPORT = `function request(method, path, body) {
+  var init = { method: method }
+  if (method !== 'GET') {
+    // Every write carries the app header: the server refuses writes without
+    // it, which a cross-site form post cannot add.
+    init.headers = { 'content-type': 'application/json', 'x-kindle-export': '1' }
+    init.body = JSON.stringify(body || {})
+  }
+  return fetch(path, init).then(function (res) {
+    return res.json().catch(function () { return {} }).then(function (data) {
+      if (!res.ok) throw new Error(data.error || ('Something went wrong (' + res.status + ').'))
+      return data
+    })
+  }, function () {
+    throw new Error('Kindle Export is not responding. Is it still running?')
+  })
+}
+
+function api(path, body) {
+  return request('POST', path, body)
+}
+
+function reload(scan) {
+  return request('GET', '/api/state' + (scan ? '?scan=1' : '')).then(function (data) {
+    state = data
+    render()
+  }).catch(function (err) {
+    toast(err.message)
+  })
+}
+
+function listenForState() {
+  var events = new EventSource('/api/events')
+  events.onmessage = function (event) {
+    state = JSON.parse(event.data)
+    render()
+  }
+}
+
+function downloadControl(attrs, asin, name) {
+  attrs.href = downloadPath(asin, name)
+  attrs.download = name
+  return el('a', attrs)
+}`
+
+const BRIDGE_TRANSPORT = `// A reply that never comes (the app busy, or a bug on the Swift side) must
+// not leave a button disabled forever; after this long the call fails with a
+// toast and a late reply is dropped.
+var BRIDGE_TIMEOUT_MS = 30000
+var pending = {}
+var nextRequestId = 1
+
+// Swift evaluates these with the JSON either inlined as a literal or as a
+// string; accept both rather than depend on which one it picked.
+function parseBridgeJson(json) {
+  if (typeof json !== 'string') return json || {}
+  try { return JSON.parse(json) } catch (err) { return {} }
+}
+
+function request(method, path, body) {
+  return new Promise(function (resolve, reject) {
+    var handler = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.kindle
+    if (!handler) {
+      reject(new Error('This page only works inside the Kindle Export app.'))
+      return
+    }
+    var id = String(nextRequestId++)
+    var timer = setTimeout(function () {
+      delete pending[id]
+      reject(new Error('Kindle Export did not answer. Please try again.'))
+    }, BRIDGE_TIMEOUT_MS)
+    pending[id] = { resolve: resolve, reject: reject, timer: timer }
+    var message = { id: id, method: method, path: path }
+    if (method !== 'GET') message.body = body || {}
+    try {
+      handler.postMessage(message)
+    } catch (err) {
+      clearTimeout(timer)
+      delete pending[id]
+      reject(new Error('Kindle Export did not answer. Please try again.'))
+    }
+  })
+}
+
+window.__kindleReply = function (id, status, json) {
+  var entry = pending[String(id)]
+  if (!entry) return
+  delete pending[String(id)]
+  clearTimeout(entry.timer)
+  var data = parseBridgeJson(json)
+  if (status >= 200 && status < 300) entry.resolve(data)
+  else entry.reject(new Error(data.error || ('Something went wrong (' + status + ').')))
+}
+
+function api(path, body) {
+  return request('POST', path, body)
+}
+
+function reload(scan) {
+  return request('GET', '/api/state' + (scan ? '?scan=1' : '')).then(function (data) {
+    state = data
+    render()
+  }).catch(function (err) {
+    toast(err.message)
+  })
+}
+
+// The same object /api/events streams, pushed by the app whenever it changes.
+function listenForState() {
+  window.__kindleState = function (json) {
+    state = parseBridgeJson(json)
+    render()
+  }
+}
+
+// A link would navigate the app's web view to a URL nothing serves; instead
+// the app saves the file to Downloads and shows it in Finder.
+function downloadControl(attrs, asin, name) {
+  attrs.type = 'button'
+  var node = el('button', attrs)
+  node.addEventListener('click', function () {
+    node.disabled = true
+    request('GET', downloadPath(asin, name)).then(function () {
+      toast('Saved “' + name + '” to Downloads.', 'good')
+    }, function (err) {
+      toast(err.message)
+    }).then(function () {
+      node.disabled = false
+    })
+  })
+  return node
+}`
 
 const PAGE = `<!doctype html>
 <html lang="en">
@@ -602,20 +771,7 @@ function toast(message, kind) {
   setTimeout(dismiss, kind === 'good' ? 5000 : 8000)
 }
 
-function api(path, body) {
-  return fetch(path, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-kindle-export': '1' },
-    body: JSON.stringify(body || {})
-  }).then(function (res) {
-    return res.json().catch(function () { return {} }).then(function (data) {
-      if (!res.ok) throw new Error(data.error || ('Something went wrong (' + res.status + ').'))
-      return data
-    })
-  }, function () {
-    throw new Error('Kindle Export is not responding. Is it still running?')
-  })
-}
+/*TRANSPORT*/
 
 function ago(ms) {
   var s = Math.max(0, Math.round((Date.now() - ms) / 1000))
@@ -858,7 +1014,7 @@ function optimistic(asin) {
   render()
 }
 
-function downloadHref(asin, name) {
+function downloadPath(asin, name) {
   return '/api/download/' + encodeURIComponent(asin) + '/' + encodeURIComponent(name)
 }
 
@@ -1244,7 +1400,7 @@ function updateCard(card, book, view) {
     var cls = 'btn' + (action.style ? ' ' + action.style : '') + (action.iconOnly ? ' icon-only' : '')
     var label = action.iconOnly ? action.text + ' “' + book.title + '”' : null
     if (action.id === 'download') {
-      node = el('a', { class: cls, href: downloadHref(book.asin, action.file), download: action.file, 'data-action': 'download-' + action.file, 'aria-label': label, title: action.iconOnly ? action.text : null })
+      node = downloadControl({ class: cls, 'data-action': 'download-' + action.file, 'aria-label': label, title: action.iconOnly ? action.text : null }, book.asin, action.file)
       node.appendChild(action.iconOnly ? icon('download') : document.createTextNode(action.text))
     } else {
       node = el('button', { class: cls, type: 'button', 'data-action': action.id, 'aria-label': label, title: action.iconOnly ? action.text : null })
@@ -1365,21 +1521,7 @@ $('menu-signin').addEventListener('click', function () {
 // "Updated 2 min ago" has to keep moving even when nothing else does.
 setInterval(function () { if (state) renderStatus() }, 30000)
 
-var events = new EventSource('/api/events')
-events.onmessage = function (event) {
-  state = JSON.parse(event.data)
-  render()
-}
-
-function reload(scan) {
-  return fetch('/api/state' + (scan ? '?scan=1' : '')).then(function (res) { return res.json() }).then(function (data) {
-    state = data
-    render()
-  }).catch(function () {
-    toast('Kindle Export is not responding. Is it still running?')
-  })
-}
-
+listenForState()
 reload(true)
 </script>
 </body>
