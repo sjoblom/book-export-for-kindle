@@ -957,7 +957,13 @@ function viewFor(book, disk, entry) {
     view.label = 'Could not export'
     view.labelKind = 'bad'
     view.detail = entry.error || ''
-    view.actions.push({ id: 'export', text: 'Try again', style: 'primary' })
+    // A capture that dies part-way leaves its pages on disk, and an ordinary
+    // export reuses them — "Try again" would rebuild the same truncated book
+    // forever. When the files say the capture stopped early, retrying means
+    // capturing again; otherwise resuming is right (it keeps what was paid for).
+    view.actions.push(remedy === 'capture-again'
+      ? { id: 'recapture', text: 'Capture again', style: 'primary' }
+      : { id: 'export', text: 'Try again', style: 'primary' })
     if (md) view.actions.push({ id: 'download', text: 'Download', file: md.name, iconOnly: true })
     return view
   }

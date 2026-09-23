@@ -1,8 +1,8 @@
 import { spawn } from 'node:child_process'
-import { createReadStream } from 'node:fs'
 import fs from 'node:fs/promises'
 import http from 'node:http'
 import path from 'node:path'
+import { pipeline } from 'node:stream/promises'
 
 import { type BookStatus, scanBooks } from './book-status'
 import { loadConfig, saveConfig } from './config'
@@ -1098,9 +1098,24 @@ class App {
       throw new HttpError(400, 'invalid file name')
     }
 
-    const stat = await fs.stat(filePath).catch(() => {
+    // Open first and ask the open file what it is, so the check and the read
+    // are about the same thing: a stat() by path can be answered by one file
+    // and the read served by another (or by nothing) if the folder changes in
+    // between. Anything unopenable is simply not there as far as the page is
+    // concerned.
+    const file = await fs.open(filePath, 'r').catch(() => {
       throw new HttpError(404, 'file not found')
     })
+    let stat: Awaited<ReturnType<typeof file.stat>>
+    try {
+      stat = await file.stat()
+      // A folder called `x.md` passes every name check, and reading it fails
+      // only once the stream starts — after the 200 has gone out.
+      if (!stat.isFile()) throw new HttpError(404, 'file not found')
+    } catch (err) {
+      await file.close().catch(() => {})
+      throw err
+    }
 
     const headers: http.OutgoingHttpHeaders = {
       'content-type': name.endsWith('.pdf')
@@ -1117,12 +1132,19 @@ class App {
     try {
       res.writeHead(200, headers)
     } catch (err) {
+      await file.close().catch(() => {})
       throw new HttpError(
         500,
         `invalid download headers: ${(err as Error).message}`
       )
     }
-    createReadStream(filePath).pipe(res)
+
+    // pipe() leaves a read error with no listener, which Node turns into an
+    // uncaught exception that takes the whole server down. pipeline() routes
+    // it here instead and destroys both ends: the browser sees a failed
+    // download (not a short file passed off as complete), and the file is
+    // closed. A reader who cancels the download lands here too.
+    await pipeline(file.createReadStream(), res).catch(() => {})
   }
 }
 

@@ -2,6 +2,7 @@ import fs from 'node:fs/promises'
 import http from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
+import { Readable } from 'node:stream'
 import vm from 'node:vm'
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -514,6 +515,49 @@ describe('serve', () => {
     expect(absent.status).toBe(404)
   })
 
+  it('refuses a folder named like an export, and keeps serving', async () => {
+    // Every name check passes for a folder called `x.md`; reading it fails
+    // only after the 200 has been sent, which used to crash the server.
+    await fs.mkdir(path.join(outDir, 'B00TEST', 'broken.md'))
+
+    const res = await fetch(handle.url + '/api/download/B00TEST/broken.md')
+    expect(res.status).toBe(404)
+
+    expect((await fetch(handle.url + '/')).status).toBe(200)
+  })
+
+  it('survives a file that fails while it is being sent', async () => {
+    // A file that vanishes or turns unreadable after it was opened: the
+    // headers are out, so all that can be done is to cut the download off.
+    const realOpen = fs.open
+    let sent = false
+    vi.spyOn(fs, 'open').mockImplementationOnce(async (...args) => {
+      const file = await realOpen(...(args as Parameters<typeof realOpen>))
+      file.createReadStream = (() =>
+        new Readable({
+          // Part of the file first, so the failure comes mid-body.
+          read() {
+            if (this.readableLength === 0 && !sent) {
+              sent = true
+              this.push('hello')
+              return
+            }
+            void file.close().finally(() => {
+              this.destroy(new Error('disk went away'))
+            })
+          }
+        })) as typeof file.createReadStream
+      return file
+    })
+
+    const res = await fetch(handle.url + '/api/download/B00TEST/the-book.md')
+    expect(res.status).toBe(200)
+    // Cut off rather than ended: a short body must not pass for the file.
+    await expect(res.text()).rejects.toThrow()
+
+    expect((await fetch(handle.url + '/')).status).toBe(200)
+  })
+
   it('captures a book again when the page asks it to', async () => {
     // The only way out of a capture that stopped part-way: without this the
     // same truncated book is rebuilt from the same pages every time.
@@ -710,6 +754,34 @@ describe('page transport', () => {
     )
     window.__kindleReply(messages[2].id, 409, { error: 'Nothing to stop.' })
     await expect(failed).rejects.toThrow('Nothing to stop.')
+  })
+
+  it('retries a failed book the way its files say it needs', () => {
+    // A capture that throws part-way leaves its pages behind; an ordinary
+    // export would reuse them and rebuild the same truncated book.
+    const { context } = fakeBrowser()
+    new vm.Script(pageScript(renderPage({ transport: 'bridge' }))).runInContext(
+      context
+    )
+    const retry = (remedy: string | undefined) => {
+      context.disk = {
+        asin: 'B00TEST',
+        exports: [],
+        completeness: { remedy, capturedPages: 40 }
+      }
+      const view = vm.runInContext(
+        "viewFor({ asin: 'B00TEST' }, disk, { asin: 'B00TEST', status: 'failed', error: 'Kindle stopped responding' })",
+        context
+      )
+      // The failure is still what the card says, whatever the remedy.
+      expect(view.label).toBe('Could not export')
+      expect(view.detail).toBe('Kindle stopped responding')
+      return view.actions[0].id
+    }
+
+    expect(retry('capture-again')).toBe('recapture')
+    expect(retry('transcribe-again')).toBe('export')
+    expect(retry(undefined)).toBe('export')
   })
 
   it('bridge mode gives up on a request the app never answers', async () => {
