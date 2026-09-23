@@ -35,7 +35,9 @@ export interface OcrEngine {
   /** Whether pages cost money to read, so callers can warn before a long run. */
   readonly costsMoney: boolean
   /**
-   * Read one page. Throwing asks the caller to retry.
+   * Read one page. Throwing asks the caller to retry, except for
+   * `OcrUnavailableError` and `OcrPageUnreadableError`, which say a retry
+   * cannot help.
    *
    * One newline in the returned text means one paragraph boundary — never a
    * wrapped line — because that is the only structure the formatter has to work
@@ -55,5 +57,29 @@ export class OcrRefusalError extends Error {
   constructor(readonly text: string) {
     super(`Model refused to transcribe the page: ${text}`)
     this.name = 'OcrRefusalError'
+  }
+}
+
+/**
+ * Thrown when the engine cannot read any page at all — a rejected API key, a
+ * model that does not exist, an exhausted quota. Every other page would fail
+ * the same way, so the run stops instead of retrying each one for minutes.
+ */
+export class OcrUnavailableError extends Error {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options)
+    this.name = 'OcrUnavailableError'
+  }
+}
+
+/**
+ * Thrown when this one page can never be read, however often it is retried —
+ * its image is missing or the service rejects it outright. The page fails
+ * straight away and the rest of the book carries on.
+ */
+export class OcrPageUnreadableError extends Error {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options)
+    this.name = 'OcrPageUnreadableError'
   }
 }

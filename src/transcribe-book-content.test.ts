@@ -2,10 +2,11 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
+import { APIError } from 'openai-fetch'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { OcrEngine } from './ocr-engine'
 import type { BookMetadata, ContentChunk, ContentStore } from './types'
+import { type OcrEngine, OcrUnavailableError } from './ocr-engine'
 import {
   type ChatCompletionClient,
   transcribeBook
@@ -502,5 +503,128 @@ describe('transcribeBook', () => {
 
     expect(failedPages).toEqual([])
     expect(content[0]!.text).toBe('old capture, still readable')
+  })
+
+  it('keeps a digits-only line that is content, not a page number', async () => {
+    await writeBook(1)
+
+    const { content } = await transcribeBook({
+      asin: ASIN,
+      outDir: root,
+      client: fakeClient(() => '12\nThe war ended.\n1947\nA new year began.\n3')
+    })
+
+    // The page number heading the page goes; the year used as a heading, and
+    // anything else further down, is the book's text.
+    expect(content[0]!.text).toBe('The war ended.\n1947\nA new year began.\n3')
+  })
+
+  it('stops the whole run when OpenAI rejects the API key', async () => {
+    await writeBook(20)
+
+    const client = fakeClient((i) =>
+      i === 0
+        ? 'page one'
+        : new APIError(
+            401,
+            { message: 'Incorrect API key provided', code: 'invalid_api_key' },
+            undefined,
+            {}
+          )
+    )
+
+    await expect(
+      transcribeBook({
+        asin: ASIN,
+        outDir: root,
+        concurrency: 1,
+        client
+      })
+    ).rejects.toThrow(/OpenAI rejected the API key.*Incorrect API key/)
+
+    // One failed request is enough to know; the old loop made twenty for each
+    // of the nineteen remaining pages.
+    expect(client.calls).toBe(2)
+    // What was read before the key was rejected is kept.
+    expect((await readContentJson()).map((c) => c.text)).toEqual(['page one'])
+  })
+
+  it('stops pages already in flight when the engine becomes unusable', async () => {
+    await writeBook(8)
+
+    let calls = 0
+    const engine: OcrEngine = {
+      name: 'fake',
+      costsMoney: true,
+      async recognize({ imagePath, signal }) {
+        calls++
+        // The last of the first batch to start, once the rest are waiting.
+        if (imagePath.endsWith('3.png')) {
+          await new Promise((resolve) => setTimeout(resolve, 10))
+          throw new OcrUnavailableError('no such model')
+        }
+
+        // The others hang until cancelled, as a slow request would.
+        await new Promise<void>((_, reject) => {
+          signal.addEventListener('abort', () => {
+            reject(new Error('aborted'))
+          })
+        })
+        return { text: 'unreachable' }
+      },
+      async close() {}
+    }
+
+    await expect(
+      transcribeBook({ asin: ASIN, outDir: root, concurrency: 4, engine })
+    ).rejects.toThrow('no such model')
+
+    // Only the first batch ever started, and none of it was retried. Without
+    // cancelling, the three pages waiting would have run to the two-minute
+    // request timeout and failed this test long before.
+    expect(calls).toBe(4)
+  })
+
+  it('fails a page whose image is gone without retrying it', async () => {
+    await writeBook(3)
+    await fs.rm(path.join(root, ASIN, 'pages', '1.png'))
+
+    const client = fakeClient(() => 'readable page')
+    const { content, failedPages } = await transcribeBook({
+      asin: ASIN,
+      outDir: root,
+      concurrency: 1,
+      client
+    })
+
+    expect(failedPages).toEqual([expect.objectContaining({ index: 1 })])
+    expect(content.map((c) => c.index)).toEqual([0, 2])
+    // The missing image never reached the model, and was not retried.
+    expect(client.calls).toBe(2)
+    expect(console.warn).not.toHaveBeenCalledWith(
+      'retrying OCR error...',
+      expect.anything()
+    )
+  })
+
+  it('fails a page OpenAI rejects outright without retrying it', async () => {
+    await writeBook(2)
+
+    const client = fakeClient((i) =>
+      i === 0
+        ? new APIError(400, { message: 'Invalid image' }, undefined, {})
+        : 'page two'
+    )
+    const { content, failedPages } = await transcribeBook({
+      asin: ASIN,
+      outDir: root,
+      concurrency: 1,
+      client
+    })
+
+    expect(client.calls).toBe(2)
+    expect(failedPages).toEqual([expect.objectContaining({ index: 0 })])
+    expect(failedPages[0]!.error).toContain('Invalid image')
+    expect(content.map((c) => c.text)).toEqual(['page two'])
   })
 })

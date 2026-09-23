@@ -5,13 +5,18 @@ import path from 'node:path'
 
 import pMap from 'p-map'
 
-import type { OcrEngine, OcrPageText } from './ocr-engine'
 import type { BookMetadata, ContentChunk, TocItem } from './types'
 import {
   createContentWriter,
   readContentStore,
   selectReusableChunks
 } from './content-store'
+import {
+  type OcrEngine,
+  type OcrPageText,
+  OcrPageUnreadableError,
+  OcrUnavailableError
+} from './ocr-engine'
 import { type ChatCompletionClient, createOpenAiOcrEngine } from './openai-ocr'
 import {
   assert,
@@ -54,18 +59,37 @@ function sleep(ms: number): Promise<void> {
 
 async function withAbortTimeout<T>(
   timeoutMs: number,
+  runSignal: AbortSignal,
   fn: (signal: AbortSignal) => Promise<T>
 ): Promise<T> {
   const controller = new AbortController()
-  const timeout = setTimeout(() => {
+  const abort = () => {
     controller.abort()
-  }, timeoutMs)
+  }
+  const timeout = setTimeout(abort, timeoutMs)
+  // Stopping the run cancels the request in flight, rather than leaving it to
+  // finish and be thrown away.
+  runSignal.addEventListener('abort', abort, { once: true })
+  if (runSignal.aborted) abort()
 
   try {
     return await fn(controller.signal)
   } finally {
     clearTimeout(timeout)
+    runSignal.removeEventListener('abort', abort)
   }
+}
+
+/**
+ * Whether a page's image can still be opened. Checked only once a read has
+ * failed, so that an image which has gone missing fails its page at once
+ * whichever engine tripped over it, instead of being retried twenty times.
+ */
+async function isImageReadable(imagePath: string): Promise<boolean> {
+  return fs
+    .access(imagePath, fs.constants.R_OK)
+    .then(() => true)
+    .catch(() => false)
 }
 
 export interface FailedPage {
@@ -197,6 +221,12 @@ export async function transcribeBook({
 
   const failedPages: FailedPage[] = []
   let completed = 0
+  // Set when the engine says no page can be read at all (a rejected API key,
+  // an unknown model). Every page in flight stops and nothing new starts:
+  // without this, a bad key spent a quarter of an hour failing a book one
+  // page and twenty retries at a time.
+  let fatalError: OcrUnavailableError | undefined
+  const run = new AbortController()
 
   await pMap(
     pending,
@@ -206,20 +236,41 @@ export async function transcribeBook({
       // Stored relative to the book directory; older captures stored something
       // else again, so never open `screenshot` directly.
       const imagePath = resolveScreenshotPath(outDir, screenshot)
+      if (fatalError) return
 
       try {
         let retries = 0
 
         do {
+          if (fatalError) return
+
           // Pinned per iteration: the retry counter is mutated below, and the
           // engine must see the attempt this call actually is.
           const attempt = retries
           let raw: OcrPageText
           try {
-            raw = await withAbortTimeout(requestTimeoutMs, (signal) =>
-              engine.recognize({ imagePath, attempt, signal })
+            raw = await withAbortTimeout(
+              requestTimeoutMs,
+              run.signal,
+              (signal) => engine.recognize({ imagePath, attempt, signal })
             )
           } catch (err: any) {
+            // Retrying these cannot help, so they go straight to the handlers
+            // below rather than through the backoff.
+            if (
+              err instanceof OcrUnavailableError ||
+              err instanceof OcrPageUnreadableError
+            ) {
+              throw err
+            }
+            if (fatalError) return
+            if (!(await isImageReadable(imagePath))) {
+              throw new OcrPageUnreadableError(
+                `page image is missing or unreadable: ${imagePath}`,
+                { cause: err }
+              )
+            }
+
             ++retries
             if (retries >= maxRetries) {
               throw err
@@ -237,7 +288,10 @@ export async function transcribeBook({
           }
 
           let text = raw.text
-            .replace(/^\s*\d+\s*$\n+/m, '')
+            // A page number read off the top of the page. Only the very first
+            // line: a digits-only line further down is content — a year as a
+            // heading, a chapter number set mid-page — and used to be deleted.
+            .replace(/^\s*\d+[ \t]*\n+/, '')
             // .replaceAll(/\n+/g, '\n')
             .replaceAll(/^\s*/gm, '')
             .replaceAll(/\s*$/gm, '')
@@ -295,6 +349,16 @@ export async function transcribeBook({
           return
         } while (true)
       } catch (err) {
+        if (err instanceof OcrUnavailableError) {
+          // Reported once for the whole run below, not as a failure of this
+          // page: nothing was wrong with the page.
+          if (!fatalError) {
+            fatalError = err
+            run.abort()
+          }
+          return
+        }
+
         // Record rather than swallow: a dropped page leaves a hole in the
         // book, and the caller has to be able to tell that from success.
         const message = (err as Error)?.message ?? String(err)
@@ -311,8 +375,11 @@ export async function transcribeBook({
   })
 
   // The last few pages are still inside the save debounce; this is what makes
-  // the file on disk the whole book rather than nearly it.
+  // the file on disk the whole book rather than nearly it. It runs before a
+  // fatal error is thrown too, so the pages read before it are kept.
   await writer.flush()
+
+  if (fatalError) throw fatalError
 
   return { content: writer.chunks(), failedPages }
 }
