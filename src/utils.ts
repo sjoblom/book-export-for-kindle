@@ -4,7 +4,6 @@ import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 
 import hashObjectImpl from 'hash-object'
-import timeFormat from 'hh-mm-ss'
 import sortKeys from 'sort-keys'
 import { extract } from 'tar'
 import { temporaryDirectory } from 'tempy'
@@ -26,6 +25,10 @@ export function assert(
   throw typeof message === 'string' ? new Error(message) : message
 }
 
+export function isPositiveInteger(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value > 0
+}
+
 export function getEnv(name: string): string | undefined {
   try {
     return typeof process !== 'undefined'
@@ -37,19 +40,28 @@ export function getEnv(name: string): string | undefined {
   }
 }
 
+/**
+ * Amazon's `"Last, First:Last2, First2:"` author strings as display names.
+ *
+ * Safe to apply twice: stored metadata holds already-normalized names, and
+ * readers such as the web app's book list normalize again on the way out —
+ * a name with no comma is taken as already in display order.
+ */
 export function normalizeAuthors(rawAuthors: string[]): string[] {
   if (!rawAuthors?.length) {
     return []
   }
 
-  const rawAuthor = rawAuthors[0]!
+  const names = rawAuthors.flatMap((raw) => raw.split(':')).filter(Boolean)
 
-  return Array.from(new Set(rawAuthor.split(':').filter(Boolean)), (authors) =>
-    authors
-      .split(',')
-      .map((elems) => elems.trim())
-      .toReversed()
-      .join(' ')
+  return Array.from(new Set(names), (name) =>
+    name.includes(',')
+      ? name
+          .split(',')
+          .map((part) => part.trim())
+          .toReversed()
+          .join(' ')
+      : name.trim()
   )
 }
 
@@ -93,59 +105,11 @@ export function deromanize(romanNumeral: string): number {
   return num
 }
 
-export async function fileExists(
-  filePath: string,
-  mode: number = fs.constants.F_OK | fs.constants.R_OK
-): Promise<boolean> {
-  try {
-    await fs.access(filePath, mode)
-    return true
-  } catch {
-    return false
-  }
-}
-
 export function hashObject(obj: Record<string, any>): string {
   return hashObjectImpl(obj, {
     algorithm: 'sha1',
     encoding: 'hex'
   })
-}
-
-export type FfmpegProgressEvent = {
-  frames: number
-  currentFps: number
-  currentKbps: number
-  targetSize: number
-  timemark: string
-  percent?: number | undefined
-}
-
-export function ffmpegOnProgress(
-  onProgress: (progress: number, event: FfmpegProgressEvent) => void,
-  durationMs: number
-) {
-  return (event: FfmpegProgressEvent) => {
-    let progress = 0
-
-    try {
-      const timestamp = timeFormat.toMs(event.timemark)
-      progress = timestamp / durationMs
-    } catch {}
-
-    if (
-      Number.isNaN(progress) &&
-      event.percent !== undefined &&
-      !Number.isNaN(event.percent)
-    ) {
-      progress = event.percent / 100
-    }
-
-    if (!Number.isNaN(progress)) {
-      progress = Math.max(0, Math.min(1, progress))
-      onProgress(progress, event)
-    }
-  }
 }
 
 /**

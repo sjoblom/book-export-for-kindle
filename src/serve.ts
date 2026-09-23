@@ -16,6 +16,7 @@ import {
   type LibraryBook,
   NotSignedInError
 } from './kindle-library'
+import { DEFAULT_OCR_MODEL } from './openai-ocr'
 import {
   bookFellShort,
   type Options,
@@ -40,9 +41,6 @@ import { isVisionOcrAvailable } from './vision-ocr'
  */
 
 export const DEFAULT_PORT = 8484
-
-/** Matches the transcriber's default; shown as a placeholder in settings. */
-const DEFAULT_MODEL = 'gpt-4.1-mini'
 
 const ASIN_REGEX = /^[A-Z0-9]+$/
 
@@ -312,7 +310,7 @@ class App {
       hasApiKey: !!getEnv('OPENAI_API_KEY'),
       localOcr: this.localOcr,
       model: this.model,
-      defaultModel: DEFAULT_MODEL,
+      defaultModel: DEFAULT_OCR_MODEL,
       amazon: this.amazon,
       busy: this.busy,
       library: this.library,

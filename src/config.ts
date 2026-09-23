@@ -2,6 +2,8 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
+import { isPositiveInteger } from './utils'
+
 /**
  * Stored settings, so the CLI works from any directory.
  *
@@ -32,7 +34,20 @@ export async function loadConfig(): Promise<UserConfig> {
   try {
     const raw = await fs.readFile(configPath(), 'utf8')
     const parsed = JSON.parse(raw)
-    return parsed && typeof parsed === 'object' ? (parsed as UserConfig) : {}
+    if (!parsed || typeof parsed !== 'object') return {}
+
+    const config = parsed as UserConfig
+    // The file is hand-editable, and a bad concurrency only blows up in p-map
+    // once transcription starts — after the capture, which can take an hour.
+    // Dropping it falls back to the default instead of failing that late.
+    if (
+      config.concurrency !== undefined &&
+      !isPositiveInteger(config.concurrency)
+    ) {
+      delete config.concurrency
+    }
+
+    return config
   } catch {
     // No config yet, or it's unreadable — defaults and flags still work.
     return {}
@@ -50,17 +65,4 @@ export async function saveConfig(config: UserConfig): Promise<string> {
   await fs.chmod(target, 0o600).catch(() => {})
 
   return target
-}
-
-/**
- * Resolve one setting: an explicit flag wins, then the environment (including
- * `.env`), then the stored config, then the built-in default.
- */
-export function resolveSetting<T>(
-  flag: T | undefined,
-  env: T | undefined,
-  stored: T | undefined,
-  fallback: T
-): T {
-  return flag ?? env ?? stored ?? fallback
 }

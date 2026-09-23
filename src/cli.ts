@@ -15,6 +15,7 @@ import { loadConfig, saveConfig } from './config'
 import { readContentStore } from './content-store'
 import { isProfileBusyError, launchBrowserContext } from './extract-kindle-book'
 import { fetchLibrary, type LibraryBook } from './kindle-library'
+import { DEFAULT_OCR_MODEL } from './openai-ocr'
 import {
   applyConfig,
   bookFellShort,
@@ -26,7 +27,7 @@ import {
 } from './pipeline'
 import { startServer } from './serve'
 import { interactiveLogin } from './session'
-import { assert } from './utils'
+import { assert, isPositiveInteger } from './utils'
 import { isVisionOcrAvailable } from './vision-ocr'
 
 export { applyConfig, type Options } from './pipeline'
@@ -62,7 +63,6 @@ Options
   --force                redo every stage, ignoring existing output
   --force-capture        redo page capture
   --force-ocr            redo transcription
-  --force-export         redo markdown export
   --keep-pages           keep page images instead of deleting them once
                          every page has been transcribed
   -h, --help             show this help
@@ -112,9 +112,6 @@ const ASIN_REGEX = /^[A-Z0-9]+$/
 /** Books that produced output but are missing part of the book. */
 const incompleteBooks = new Set<string>()
 
-/** Shown by `setup` as the suggested transcription model. */
-const DEFAULT_MODEL = 'gpt-4.1-mini'
-
 export function parseArgs(argv: string[]): Options | undefined {
   const positional: string[] = []
   let outDir: string | undefined
@@ -130,7 +127,6 @@ export function parseArgs(argv: string[]): Options | undefined {
   let force = false
   let forceCapture = false
   let forceOcr = false
-  let forceExport = false
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]!
@@ -159,7 +155,9 @@ export function parseArgs(argv: string[]): Options | undefined {
         model = next()
         break
       case '--concurrency':
-        concurrency = Number.parseInt(next(), 10)
+        // Checked here because p-map only rejects it once transcription
+        // starts, which is after a capture that can take an hour.
+        concurrency = parsePositiveInteger(arg, next())
         break
       case '--otp':
         otp = next()
@@ -168,7 +166,7 @@ export function parseArgs(argv: string[]): Options | undefined {
         json = true
         break
       case '--limit':
-        limit = Number.parseInt(next(), 10)
+        limit = parsePositiveInteger(arg, next())
         break
       case '--port':
         port = Number.parseInt(next(), 10)
@@ -202,7 +200,8 @@ export function parseArgs(argv: string[]): Options | undefined {
         forceOcr = true
         break
       case '--force-export':
-        forceExport = true
+        // Export always rewrites its output, so there's nothing to force. Still
+        // accepted so existing scripts that pass it don't start failing.
         break
       case '--keep-pages':
         keepPages = true
@@ -243,8 +242,21 @@ export function parseArgs(argv: string[]): Options | undefined {
     keepPages,
     forceCapture: force || forceCapture,
     forceOcr: force || forceOcr,
-    forceExport: force || forceExport
+    forceExport: force
   }
+}
+
+/**
+ * Strict where parseInt isn't: `8x` or `1.5` would otherwise pass as 8 or 1,
+ * and `x` as NaN that fails far from the flag that caused it.
+ */
+function parsePositiveInteger(flag: string, raw: string): number {
+  const value = Number(raw)
+  assert(
+    /^\d+$/.test(raw.trim()) && isPositiveInteger(value),
+    `${flag} requires a positive whole number`
+  )
+  return value
 }
 
 function formatDuration(ms: number): string {
@@ -315,7 +327,7 @@ async function setup(): Promise<void> {
     message: localOcr
       ? 'Model used to read page images (blank = this Mac):'
       : 'Model used to read page images:',
-    default: stored.model ?? (localOcr ? '' : DEFAULT_MODEL)
+    default: stored.model ?? (localOcr ? '' : DEFAULT_OCR_MODEL)
   })
 
   const outDir = await input({

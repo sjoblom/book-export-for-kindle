@@ -1,9 +1,13 @@
+import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import type * as ConfigModule from './config'
 import type { UserConfig } from './config'
+
+type ActualConfig = typeof ConfigModule
 
 // Reading the real ~/.kindle-export/config.json would make these tests depend
 // on the machine they run on, and applyConfig copies a stored key into the
@@ -78,6 +82,30 @@ describe('parseArgs', () => {
     expect(parseArgs(['--version'])).toBeUndefined()
   })
 
+  it('rejects a --concurrency or --limit that is not a positive integer', () => {
+    // Caught at parse time: p-map would only reject it once transcription
+    // starts, after a capture that can take an hour.
+    for (const bad of ['x', '0', '-2', '1.5', '8x', ' ']) {
+      expect(() => parseArgs(['--concurrency', bad, 'B01H4G2J1U'])).toThrow(
+        /--concurrency requires a positive whole number/
+      )
+      expect(() => parseArgs(['list', '--limit', bad])).toThrow(
+        /--limit requires a positive whole number/
+      )
+    }
+
+    expect(parseArgs(['--concurrency', '4'])?.concurrency).toBe(4)
+    expect(parseArgs(['list', '--limit', '10'])?.limit).toBe(10)
+  })
+
+  it('still accepts --force-export, as a no-op', () => {
+    // Export always rewrites; the flag stays so existing scripts keep working.
+    expect(parseArgs(['--force-export', 'B01H4G2J1U'])).toMatchObject({
+      asins: ['B01H4G2J1U'],
+      forceExport: false
+    })
+  })
+
   it('makes --force imply every stage', () => {
     expect(parseArgs(['--force', 'B01H4G2J1U'])).toMatchObject({
       forceCapture: true,
@@ -134,5 +162,39 @@ describe('applyConfig', () => {
 
     expect(options.outDir).toBe('from-flag')
     expect(options.profileDir).toBe('/tmp/profile')
+  })
+})
+
+const actualConfig = await vi.importActual<ActualConfig>('./config')
+
+/** Write a config file under the faked home directory, then read it back. */
+async function loadStored(config: unknown): Promise<UserConfig> {
+  await fs.mkdir(actualConfig.configDir(), { recursive: true })
+  await fs.writeFile(actualConfig.configPath(), JSON.stringify(config))
+  return actualConfig.loadConfig()
+}
+
+describe('loadConfig', () => {
+  let home: string
+
+  beforeEach(async () => {
+    home = await fs.mkdtemp(path.join(os.tmpdir(), 'kindle-export-config-'))
+    vi.spyOn(os, 'homedir').mockReturnValue(home)
+  })
+
+  afterEach(async () => {
+    await fs.rm(home, { recursive: true, force: true })
+  })
+
+  it('drops a stored concurrency that p-map would reject', async () => {
+    for (const concurrency of ['8', 0, -1, 2.5, null]) {
+      expect(await loadStored({ concurrency, model: 'm' })).toEqual({
+        model: 'm'
+      })
+    }
+  })
+
+  it('keeps a valid stored concurrency', async () => {
+    expect(await loadStored({ concurrency: 4 })).toEqual({ concurrency: 4 })
   })
 })
