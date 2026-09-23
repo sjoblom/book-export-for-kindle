@@ -78,6 +78,10 @@ public final class NativeBackend: NSObject, AppBackend, NSWindowDelegate {
   public func signIn() async -> Bool {
     do {
       try await session.load(Self.libraryURL)
+      // As in fetchLibrary: a signed-out session reaches sign-in only after a
+      // scripted redirect, and checking before it has happened reads as
+      // "already signed in" — which put the window away unseen.
+      try await Task.sleep(nanoseconds: Self.redirectSettleNanoseconds)
     } catch {
       return false
     }

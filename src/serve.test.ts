@@ -646,6 +646,17 @@ describe('page transport', () => {
     for (const url of urls) expect(url).toMatch(/^(data:|https:)/)
   })
 
+  it('names the window Amazon actually runs in', () => {
+    // The app has no Chrome: telling someone to sign in "in the Chrome
+    // window" sends them looking for a window that doesn't exist.
+    const bridge = pageScript(renderPage({ transport: 'bridge' }))
+    expect(bridge).toContain("window: 'the Amazon window'")
+    expect(bridge).not.toMatch(/Chrome window|A Chrome window/)
+
+    const http = pageScript(renderPage())
+    expect(http).toContain("window: 'the Chrome window'")
+  })
+
   it('bridge mode sends requests and settles them from replies', async () => {
     const { context, window, messages } = fakeBrowser()
     new vm.Script(pageScript(renderPage({ transport: 'bridge' }))).runInContext(
