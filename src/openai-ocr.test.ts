@@ -124,6 +124,67 @@ describe('createOpenAiOcrEngine', () => {
     await expect(recognize(refusing)).rejects.toBeInstanceOf(OcrRefusalError)
   })
 
+  it('throws a structured refusal as a refusal, not as an empty page', async () => {
+    const engine = createOpenAiOcrEngine({
+      client: {
+        async createChatCompletion() {
+          return {
+            choices: [
+              {
+                message: {
+                  content: null,
+                  refusal: "I'm sorry, I can't help with that."
+                },
+                finish_reason: 'stop'
+              }
+            ]
+          }
+        }
+      }
+    })
+
+    await expect(recognize(engine)).rejects.toBeInstanceOf(OcrRefusalError)
+  })
+
+  it('treats a reply stopped by the content filter as a refusal', async () => {
+    const engine = createOpenAiOcrEngine({
+      client: {
+        async createChatCompletion() {
+          return {
+            // Whatever made it out before the filter is not the whole page.
+            choices: [
+              {
+                message: { content: 'The first half of' },
+                finish_reason: 'content_filter'
+              }
+            ]
+          }
+        }
+      }
+    })
+
+    await expect(recognize(engine)).rejects.toBeInstanceOf(OcrRefusalError)
+  })
+
+  it('ignores an empty refusal field', async () => {
+    const engine = createOpenAiOcrEngine({
+      client: {
+        async createChatCompletion() {
+          return {
+            choices: [
+              {
+                message: { content: 'Page text.', refusal: null },
+                finish_reason: 'stop'
+              }
+            ]
+          }
+        }
+      }
+    })
+
+    await expect(recognize(engine)).resolves.toEqual({ text: 'Page text.' })
+  })
+
   it('reports a rejected key as the whole engine being unusable', async () => {
     const recognizing = recognize(engineThrowing(apiError(401)))
     await expect(recognizing).rejects.toBeInstanceOf(OcrUnavailableError)

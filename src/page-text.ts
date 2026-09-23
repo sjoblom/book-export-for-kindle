@@ -1,6 +1,5 @@
 import type { BookMetadata, ContentChunk, OcrLine, TocItem } from './types'
 import { reconstructParagraphs } from './ocr-layout'
-import { escapeRegExp } from './pure-utils'
 
 export interface ShapePageTextOptions {
   /**
@@ -32,11 +31,61 @@ export function shapePageText(
     .replaceAll(/\s*$/gm, '')
 
   if (tocLabelToStrip) {
-    text = text.replace(
-      // eslint-disable-next-line security/detect-non-literal-regexp
-      new RegExp(`^${escapeRegExp(tocLabelToStrip)}\\s*`, 'i'),
-      ''
-    )
+    text = stripHeading(text, tocLabelToStrip)
+  }
+
+  return text
+}
+
+/** Longest a heading may wrap to and still be recognised as the label. */
+const MAX_HEADING_LINES = 3
+
+/**
+ * A heading reduced to what OCR reliably gets right: letters and digits, in
+ * any script, lowercased. Case, punctuation and spacing all vary between the
+ * TOC and the page — `Don’t think!` against `DON'T THINK`, a trailing `…` read
+ * as `.…` — and none of it says whether the line is the heading.
+ */
+function headingKey(text: string): string {
+  return text
+    .toLowerCase()
+    .replaceAll(/[^\p{L}\p{N}]+/gu, ' ')
+    .trim()
+}
+
+/**
+ * `text` without its opening heading, when that heading is `label`.
+ *
+ * Only whole lines are removed, and only when together they are the label and
+ * nothing else. Both engines put a heading on its own line — Vision reports it
+ * as its own paragraph, and a model transcribes it as one — so a label that
+ * merely starts the first sentence is prose. Matching the label as a prefix
+ * instead turned `It was a cold morning.` under a chapter `I` into `t was a
+ * cold morning.`, and took `Introduction` off a sentence that opened with it.
+ *
+ * The heading may wrap (`CHAPTER ONE` / `YOU ARE NOT YOUR MIND` for `Chapter
+ * One: You Are Not Your Mind`), so the first few lines are tried together.
+ */
+function stripHeading(text: string, label: string): string {
+  const labelKey = headingKey(label)
+  const lines = text.split('\n')
+
+  if (!labelKey) {
+    // Nothing but symbols (`***`, `§`): there is nothing to normalise, so
+    // only the line exactly as the TOC gives it counts.
+    return lines[0] === label.trim() ? lines.slice(1).join('\n') : text
+  }
+
+  const keys = new Set([labelKey])
+  // TOC labels are often numbered (`1. The Mom Test`) while the heading on
+  // the page is not — the same allowance the formatter makes.
+  const unnumbered = labelKey.replace(/^\d+ /, '')
+  if (unnumbered) keys.add(unnumbered)
+
+  let heading = ''
+  for (let n = 1; n <= Math.min(MAX_HEADING_LINES, lines.length); n++) {
+    heading = `${heading} ${headingKey(lines[n - 1]!)}`.trim()
+    if (keys.has(heading)) return lines.slice(n).join('\n')
   }
 
   return text

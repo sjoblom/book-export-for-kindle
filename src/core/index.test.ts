@@ -159,7 +159,9 @@ const store = {
     {
       ...chunk(1, 'stale'),
       lines: [
-        { text: 'Two', left: 40, top: 60, width: 100, height: 30 },
+        // A centred heading, so it reads as its own paragraph: only a whole
+        // heading line is taken off, never the start of the prose.
+        { text: 'Two', left: 400, top: 60, width: 100, height: 30 },
         { text: 'A line that', left: 40, top: 100, width: 820, height: 30 },
         { text: 'wraps on.', left: 40, top: 145, width: 300, height: 30 }
       ]

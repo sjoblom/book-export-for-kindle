@@ -69,6 +69,76 @@ describe('shapePageText', () => {
     ).toBe('Text.')
   })
 
+  it('strips a heading whose case and punctuation differ from the label', () => {
+    expect(
+      shapePageText("DON'T THINK\nWhy scheme for a morsel?", {
+        tocLabelToStrip: 'Don’t think!'
+      })
+    ).toBe('Why scheme for a morsel?')
+    expect(
+      shapePageText('i always have a thing for.….\nThe robots are lovers.', {
+        tocLabelToStrip: 'i always have a thing for…'
+      })
+    ).toBe('The robots are lovers.')
+  })
+
+  it('strips a heading the page wraps over several lines', () => {
+    expect(
+      shapePageText('CHAPTER ONE\nYOU ARE NOT YOUR MIND\nThe body.', {
+        tocLabelToStrip: 'Chapter One: You Are Not Your Mind'
+      })
+    ).toBe('The body.')
+  })
+
+  it('strips an unnumbered heading under a numbered label', () => {
+    expect(
+      shapePageText('The Mom Test\nTrust nobody.', {
+        tocLabelToStrip: '1. The Mom Test'
+      })
+    ).toBe('Trust nobody.')
+    // And the numbered heading, as printed.
+    expect(
+      shapePageText('1. The Mom Test\nTrust nobody.', {
+        tocLabelToStrip: '1. The Mom Test'
+      })
+    ).toBe('Trust nobody.')
+  })
+
+  it('keeps prose that merely begins with the label', () => {
+    // A roman-numeral chapter whose first sentence starts with the same letter.
+    expect(
+      shapePageText('It was a cold morning.', { tocLabelToStrip: 'I' })
+    ).toBe('It was a cold morning.')
+    expect(
+      shapePageText('IV\nIvy grew on the walls.', { tocLabelToStrip: 'IV' })
+    ).toBe('Ivy grew on the walls.')
+    expect(
+      shapePageText('Ivy grew on the walls.', { tocLabelToStrip: 'IV' })
+    ).toBe('Ivy grew on the walls.')
+    // A word label that opens an ordinary sentence.
+    expect(
+      shapePageText('Introduction of the new rules took a year.', {
+        tocLabelToStrip: 'Introduction'
+      })
+    ).toBe('Introduction of the new rules took a year.')
+    // The heading and the first words of the body on one line are not a
+    // heading line either.
+    expect(
+      shapePageText('Chapter One It began.', {
+        tocLabelToStrip: 'Chapter One'
+      })
+    ).toBe('Chapter One It began.')
+  })
+
+  it('strips a label of symbols only when the line is exactly it', () => {
+    expect(
+      shapePageText('***\nLater that day.', { tocLabelToStrip: '***' })
+    ).toBe('Later that day.')
+    expect(
+      shapePageText('*** Later that day.', { tocLabelToStrip: '***' })
+    ).toBe('*** Later that day.')
+  })
+
   it('leaves a blank page blank', () => {
     expect(shapePageText('')).toBe('')
     expect(shapePageText('  \n ', { tocLabelToStrip: 'Chapter One' })).toBe('')

@@ -6,6 +6,7 @@ import { APIError } from 'openai-fetch'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { BookMetadata, ContentChunk, ContentStore } from './types'
+import { bookCompleteness } from './capture-status'
 import { type OcrEngine, OcrUnavailableError } from './ocr-engine'
 import {
   type ChatCompletionClient,
@@ -195,6 +196,61 @@ describe('transcribeBook', () => {
     expect(content[0]!.text).toBe('')
   })
 
+  it('fails a page the model refuses through the refusal field, rather than calling it blank', async () => {
+    await writeBook(2)
+
+    let calls = 0
+    const client: ChatCompletionClient = {
+      async createChatCompletion() {
+        const call = calls++
+        // Page 1 reads fine; page 2 is refused on every attempt, the way
+        // newer models do it: no content at all, the reason set apart.
+        return call === 0
+          ? { choices: [{ message: { content: 'page one' } }] }
+          : {
+              choices: [
+                {
+                  message: {
+                    content: null,
+                    refusal: "I'm sorry, I can't help with that."
+                  },
+                  finish_reason: 'stop'
+                }
+              ]
+            }
+      }
+    }
+    const { content, failedPages } = await transcribeBook({
+      asin: ASIN,
+      outDir: root,
+      concurrency: 1,
+      maxRetries: 4,
+      client
+    })
+
+    // Retried as a refusal (all four attempts), not given up on after the
+    // three empty-response attempts a blank page gets.
+    expect(calls).toBe(1 + 4)
+    expect(content.map((c) => c.index)).toEqual([0])
+    expect(failedPages).toHaveLength(1)
+    expect(failedPages[0]).toMatchObject({ index: 1, page: 2 })
+    expect(failedPages[0]!.error).toContain("can't help")
+
+    // What the pipeline gates image cleanup on: a page still missing, so the
+    // refused page's image is kept for a retry.
+    const outDir = path.join(root, ASIN)
+    const completeness = bookCompleteness({
+      metadata: JSON.parse(
+        await fs.readFile(path.join(outDir, 'metadata.json'), 'utf8')
+      ) as BookMetadata,
+      content: JSON.parse(
+        await fs.readFile(path.join(outDir, 'content.json'), 'utf8')
+      ) as ContentStore
+    })
+    expect(completeness.missingPages).toEqual([{ index: 1, page: 2 }])
+    expect(completeness.complete).toBe(false)
+  })
+
   it('treats a whitespace-only reply as blank, not as text', async () => {
     await writeBook(1)
 
@@ -237,7 +293,7 @@ describe('transcribeBook', () => {
     await writeBook(2, [{ label: 'C++ Primer (2nd ed.)', page: 2 }])
 
     const client = fakeClient((i) =>
-      i === 0 ? 'page one' : 'C++ Primer (2nd ed.) and then the body text'
+      i === 0 ? 'page one' : 'C++ Primer (2nd ed.)\nand then the body text'
     )
     const { content, failedPages } = await transcribeBook({
       asin: ASIN,
@@ -246,8 +302,9 @@ describe('transcribeBook', () => {
       client
     })
 
-    // Unescaped, this label is an invalid regex and the page dies after a paid
-    // request; a label like "Chapter 1 (cont.)" would silently mis-match.
+    // Built into a regex unescaped, this label was invalid and the page died
+    // after a paid request. Labels are compared as text now; this guards
+    // against that coming back.
     expect(failedPages).toEqual([])
     expect(content[1]!.text).toBe('and then the body text')
   })

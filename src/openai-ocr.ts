@@ -97,7 +97,12 @@ export interface ChatCompletionClient {
   createChatCompletion(
     params: any,
     opts?: { signal?: AbortSignal }
-  ): Promise<{ choices: Array<{ message: { content?: string | null } }> }>
+  ): Promise<{
+    choices: Array<{
+      message: { content?: string | null; refusal?: string | null }
+      finish_reason?: string | null
+    }>
+  }>
 }
 
 function getTemperature(model: string, attempt: number): number | undefined {
@@ -179,7 +184,26 @@ Do not include any additional text, descriptions, or punctuation. Ignore any emb
           throw classifyApiError(err, model)
         })
 
-      const text = res.choices[0]?.message?.content ?? ''
+      const choice = res.choices[0]
+
+      // Newer models decline through a separate `refusal` field and leave
+      // `content` null. Read as content alone, that is an empty page, and after
+      // the blank-page retries the transcriber accepts it as one: the book is
+      // then called complete and its page images are deleted with a page of
+      // text silently missing. A refusal is retried like any other, and
+      // failing that the page is recorded as failed, never as blank.
+      const refusal = choice?.message?.refusal?.trim()
+      if (refusal) {
+        throw new OcrRefusalError(refusal)
+      }
+      // The same outcome reached by OpenAI's filter rather than the model:
+      // whatever content came with it is cut short or absent, so it is not the
+      // page either.
+      if (choice?.finish_reason === 'content_filter') {
+        throw new OcrRefusalError('(stopped by the content filter)')
+      }
+
+      const text = choice?.message?.content ?? ''
 
       if (isRefusal(text)) {
         throw new OcrRefusalError(text)
