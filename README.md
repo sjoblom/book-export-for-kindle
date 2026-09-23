@@ -29,9 +29,24 @@ ARCH=universal pnpm package   # Apple silicon and Intel in one app (needs Xcode)
 
 Building it needs this repo's dev setup (Node and pnpm, plus Xcode or its
 command line tools); the app it produces needs none of it. It lands in
-`dist-app/`. Copy it to the other Mac's `/Applications`, then right-click →
-**Open** → **Open** once — it is signed ad hoc, not notarised, so the first
-launch needs that; afterwards it opens with a normal double-click.
+`dist-app/`.
+
+To put it on another Mac:
+
+1. AirDrop `Book Export for Kindle.app` to that Mac (or copy it over any
+   other way that keeps a folder intact — an `.app` is a folder; zip it
+   first with `ditto -c -k --keepParent` for email or cloud storage).
+2. Move it into **Applications**. If an older `Kindle Export.app` is there,
+   delete it — the new app keeps its Amazon sign-in and its books.
+3. Open it once the long way, because it is signed ad hoc, not notarised,
+   so macOS refuses the first launch:
+   - **macOS 15 or later:** double-click it, click **Done** on the warning,
+     then open **System Settings → Privacy & Security**, scroll down and
+     click **Open Anyway** (and confirm with your password or Touch ID).
+   - **macOS 13–14:** right-click it → **Open** → **Open**.
+
+After that it opens with a normal double-click. Every new build is a new
+unsigned app, so step 3 comes back after each update.
 
 It shows your Kindle library in a single window: click a book to export it;
 clicking more lines them up. Each book's card says where it is — capturing

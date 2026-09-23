@@ -18,7 +18,8 @@
 # macos/Sources/KindleExportCLI/main.swift.
 #
 # The result is ad-hoc signed, not notarised. Installing it on someone else's
-# Mac means copying it to /Applications and right-click → Open once; after
+# Mac means copying it to /Applications and approving it once (Privacy &
+# Security → Open Anyway on macOS 15+, right-click → Open before); after
 # that it opens like any other app.
 set -euo pipefail
 
@@ -114,7 +115,7 @@ if ! sh scripts/make-icon.sh "$RES/icon.icns" 2>/dev/null; then
 fi
 
 # Ad-hoc signing keeps macOS from killing the bundle outright on Apple Silicon;
-# it is not notarisation, so first launch still needs right-click → Open.
+# it is not notarisation, so the first launch still needs approving by hand.
 say "Signing ad-hoc"
 # The tool first, as code of its own; then the bundle, whose seal covers it.
 codesign --force --sign - "$CONTENTS/MacOS/$CLI_PRODUCT"
@@ -170,8 +171,10 @@ say "Built $APP ($SIZE)"
 echo
 echo "To install on another Mac (macOS 13 or later):"
 echo "  1. Copy \"$APP_NAME.app\" to that Mac's /Applications folder"
-echo "  2. Right-click it → Open → Open (once, because it isn't notarised)"
-echo "  3. After that it opens with a normal double-click"
+echo "  2. Open it; macOS refuses the first launch because it isn't notarised"
+echo "  3. macOS 15+: System Settings → Privacy & Security → Open Anyway"
+echo "     macOS 13–14: right-click it → Open → Open"
+echo "  4. After that it opens with a normal double-click"
 echo
 echo "Nothing else to install. Books are written to"
 echo "  ~/Documents/Kindle Export"
