@@ -174,6 +174,21 @@ final class CaptureBlobStoreTests: XCTestCase {
     XCTAssertEqual(store.urls, ["b", "c"])
   }
 
+  /// WebKit's reader renders pages well ahead of showing them: a blob that
+  /// arrived while screen 1 was consumed became `src` nine consumptions later.
+  func testKeepsABlobRenderedWellAheadWithTheDefaults() {
+    let store = BlobStore()
+    store.insert(url: "s0", type: "", data: Data())
+    _ = store.take("s0")
+    store.insert(url: "ahead", type: "", data: Data([7]))
+    for i in 1...12 {
+      store.insert(url: "s\(i)", type: "", data: Data())
+      _ = store.take("s\(i)")
+    }
+    XCTAssertEqual(store.take("ahead")?.data, Data([7]))
+    XCTAssertTrue(store.recentlyEvicted.isEmpty)
+  }
+
   func testRemoveAll() {
     let store = BlobStore()
     store.insert(url: "a", type: "", data: Data())

@@ -72,7 +72,12 @@ public struct AppEnvironment {
   ///   (`WKWebsiteDataStore.default()`, managed by WebKit, not ours to write
   ///   into), so the per-app Application Support folder is the equivalent
   ///   place — per user, per app, not synced, and removed with the app's data.
-  public static func standard() -> AppEnvironment {
+  ///
+  /// `KINDLE_EXPORT_OUT_DIR` puts the books somewhere else (for the
+  /// developer autotest, see the app's Autotest.swift).
+  public static func standard(
+    environment: [String: String] = ProcessInfo.processInfo.environment
+  ) -> AppEnvironment {
     let fm = FileManager.default
     let home = fm.homeDirectoryForCurrentUser
     let support =
@@ -82,7 +87,9 @@ public struct AppEnvironment {
       (try? fm.url(for: .downloadsDirectory, in: .userDomainMask, appropriateFor: nil, create: true))
       ?? home.appendingPathComponent("Downloads")
     return AppEnvironment(
-      outDir: home.appendingPathComponent("Documents/Kindle Export", isDirectory: true),
+      outDir: environment["KINDLE_EXPORT_OUT_DIR"].flatMap { $0.isEmpty ? nil : $0 }
+        .map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath, isDirectory: true) }
+        ?? home.appendingPathComponent("Documents/Kindle Export", isDirectory: true),
       configURL: home.appendingPathComponent(".kindle-export/config.json"),
       libraryCacheDir: support.appendingPathComponent("Kindle Export", isDirectory: true),
       downloadsDir: downloads)

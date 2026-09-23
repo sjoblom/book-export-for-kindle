@@ -22,7 +22,13 @@ public final class BlobStore {
     public let consumedAtArrival: Int
   }
 
-  public static let defaultMaxAgeInConsumptions = 8
+  /// extract-kindle-book.ts uses 8, which suits Chrome. WebKit's reader
+  /// renders further ahead: in the app (September 2026, "How to Live") the
+  /// blob for screen 10 arrived while screen 1 was consumed and was shown
+  /// only nine consumptions later — aged out at 8, failing the capture every
+  /// time. Stale URLs can never match a later `src` (each render gets a fresh
+  /// one), so a longer age costs only memory, which `maxCount` bounds.
+  public static let defaultMaxAgeInConsumptions = 32
   public static let defaultMaxCount = 64
 
   /// Consumptions a blob may sit through before it is dropped.
@@ -43,6 +49,10 @@ public final class BlobStore {
     self.maxAgeInConsumptions = maxAgeInConsumptions
     self.maxCount = maxCount
   }
+
+  /// The last few URLs aged out, with the consumption count each arrived at
+  /// — to tell "evicted too early" from "never arrived" in an error.
+  public private(set) var recentlyEvicted: [(url: String, arrivedAt: Int)] = []
 
   public var count: Int { blobs.count }
   public var urls: [String] { order }
@@ -76,6 +86,7 @@ public final class BlobStore {
       guard let blob = blobs[url] else { return true }
       if consumedCount - blob.consumedAtArrival > maxAgeInConsumptions {
         blobs.removeValue(forKey: url)
+        noteEvicted(url, blob)
         return true
       }
       return false
@@ -83,7 +94,12 @@ public final class BlobStore {
 
     while blobs.count > maxCount, let oldest = order.first {
       order.removeFirst()
-      blobs.removeValue(forKey: oldest)
+      if let blob = blobs.removeValue(forKey: oldest) { noteEvicted(oldest, blob) }
     }
+  }
+
+  private func noteEvicted(_ url: String, _ blob: Blob) {
+    recentlyEvicted.append((url, blob.consumedAtArrival))
+    if recentlyEvicted.count > 32 { recentlyEvicted.removeFirst(recentlyEvicted.count - 32) }
   }
 }

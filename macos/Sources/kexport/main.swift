@@ -108,9 +108,15 @@ final class Runner: NSObject, NSApplicationDelegate {
       return 1
     }
 
-    let session = ReaderSession()
+    // An ordinary titled window rather than the app's invisible host, so
+    // --show and sign-in have something to show.
+    let window = NSWindow(
+      contentRect: NSRect(origin: NSPoint(x: 120, y: 120), size: ReaderSession.viewportSize),
+      styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered,
+      defer: false)
+    let session = ReaderSession(window: window)
     self.session = session
-    session.window.title = "kexport — \(arguments.asin)"
+    session.hostWindow.title = "kexport — \(arguments.asin)"
     session.log = { log("session: \($0)") }
     if arguments.show { session.show() } else { session.minimize() }
 

@@ -76,10 +76,12 @@ command line tools); the app it produces needs none of it. It lands in
 **Open** → **Open** once — it is signed ad hoc, not notarised, so the first
 launch needs that; afterwards it opens with a normal double-click.
 
-It shows the same page as `kindle-export serve`, in its own window. Amazon
-sign-in happens in a second window inside the app (sign in there as you always
-do; it stays signed in between launches), and the same window turns the pages
-during a capture, out of the way. Pages are read with Apple's Vision framework
+It shows the same page as `kindle-export serve`, in a single window. When
+Amazon needs you to sign in, that window shows Amazon's own sign-in page under
+a small bar with a **Cancel** button (sign in as you always do; it stays signed
+in between launches), and switches back to your library by itself once you're
+in. The pages of a book are turned out of sight — you can keep using your Mac
+while it reads. Pages are read with Apple's Vision framework
 on the Mac itself. Books are written to `~/Documents/Kindle Export`, and
 **Download** saves a copy to `~/Downloads` and shows it in Finder. Quitting
 while a book is being exported asks first.

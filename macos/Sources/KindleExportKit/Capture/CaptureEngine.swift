@@ -203,6 +203,11 @@ public final class CaptureEngine {
       }
       let blob = try await takeBlob(src)
       guard let blob else {
+        let evicted = session.blobs.recentlyEvicted.first { $0.url == src }
+        info(
+          "blob store: \(session.blobs.count) waiting, \(session.blobs.consumedCount) consumed; "
+            + (evicted.map { "this one arrived at consumption \($0.arrivedAt) and was aged out" }
+              ?? "this one never arrived"))
         throw CaptureError.failed(
           "no blob found for src: \(src) (index \(index); page \(currentPage))")
       }

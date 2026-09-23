@@ -39,9 +39,9 @@ public final class AppModel {
   public private(set) var stopRequested = false
   public private(set) var log: [QueueLogEntry] = []
 
-  /// The sign-in window opens by itself at most once per launch. A second
-  /// automatic window after the person closed the first would feel like the
-  /// app fighting them; from then on the page offers a button.
+  /// Amazon's sign-in page comes up by itself at most once per launch. A
+  /// second automatic sign-in after the person cancelled the first would feel
+  /// like the app fighting them; from then on the page offers a button.
   public private(set) var autoSignInUsed = false
   /// A refresh came due while an export held the session; run it afterwards.
   private var refreshAfterQueue = false
@@ -314,12 +314,12 @@ public final class AppModel {
       throw AppHTTPError(409, "an export is running — wait for it to finish")
     }
     if busy != nil {
-      throw AppHTTPError(409, "the Amazon window is busy — close it or wait")
+      throw AppHTTPError(409, "Kindle Export is busy with Amazon — try again in a moment")
     }
     runLogin()
   }
 
-  /// Refresh the library in the minimized reader window.
+  /// Refresh the library with the reader, out of sight.
   ///
   /// Skipped while an export runs: the export has the session, and books
   /// clicked meanwhile shouldn't wait behind a refresh they didn't ask for. A
@@ -353,8 +353,8 @@ public final class AppModel {
     }
   }
 
-  /// Show the sign-in window, and once Amazon confirms the session, read the
-  /// library with it. Assumes the caller checked the session is free.
+  /// Show Amazon's sign-in page (in the main window), and once Amazon
+  /// confirms the session, read the library with it. Assumes the caller checked the session is free.
   private func runLogin() {
     let before = amazon
     autoSignInUsed = true
@@ -366,7 +366,7 @@ public final class AppModel {
     Task { @MainActor in
       let confirmed = await backend.signIn()
       if !confirmed || disposed {
-        // Closing the window is an answer, not a new fact about the session:
+        // Cancelling is an answer, not a new fact about the session:
         // whatever was known before still holds.
         amazon = before == .signingIn ? .unknown : before
         releaseSession()

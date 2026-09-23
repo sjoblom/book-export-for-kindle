@@ -106,6 +106,32 @@ final class AppBridgePageTests: XCTestCase {
     }
   }
 
+  /// Sign-in shows Amazon's page in place of this one, so the page points at
+  /// no other window; and it never mentions one while a book is read.
+  func testSignInWordingPointsAtNoOtherWindow() async throws {
+    try await waitFor("the library refresh") { self.model.busy == nil }
+    let signingIn = try await page(
+      """
+      state = Object.assign({}, state, { amazon: 'signing-in', busy: 'login' })
+      noticeFingerprint = ''
+      render()
+      return document.getElementById('status-text').textContent + '|' + document.getElementById('notices').innerText
+      """)
+    XCTAssertEqual(signingIn as? String, "Signing in to Amazon…|")
+
+    let signedOut = try await page(
+      """
+      state = Object.assign({}, state, { amazon: 'signed-out', busy: null })
+      noticeFingerprint = ''
+      render()
+      return document.getElementById('notices').innerText
+      """)
+    let text = try XCTUnwrap(signedOut as? String)
+    XCTAssertTrue(text.contains("Opens Amazon’s sign-in page in this window."), text)
+    XCTAssertTrue(text.contains("Sign in to Amazon"), text)
+    XCTAssertFalse(text.contains("window opens"), text)
+  }
+
   func testDownloadsGoThroughTheBridge() async throws {
     let saved = try await page(
       "return await request('GET', downloadPath('B00TEST', 'the-book.md')).then(r => r.saved)")

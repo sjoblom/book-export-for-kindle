@@ -9,7 +9,8 @@ import WebKit
 /// a `URL.createObjectURL` hook, render TARs through a `fetch`/XHR hook, and
 /// the reader only reacts to *trusted* input — `element.click()` from script
 /// does nothing on its chevrons — so clicks and key presses are synthesized
-/// `NSEvent`s sent through the window, which works while it is minimized.
+/// `NSEvent`s sent through the window, which works while it is minimized
+/// and while it sits off-screen in a `ReaderHostWindow`.
 ///
 /// This class is deliberately thin: it knows about web views, events and
 /// hooks, not about books. `CaptureEngine` does the reading.
@@ -40,7 +41,14 @@ public final class ReaderSession: NSObject {
   public static let viewportSize = NSSize(width: 1280, height: 720)
 
   public let webView: WKWebView
-  public let window: NSWindow
+  /// The window the reader lives in when it isn't shown anywhere else: an
+  /// invisible `ReaderHostWindow` unless the caller supplied its own.
+  public let hostWindow: NSWindow
+  /// The window hosting the web view right now — the host, or whichever
+  /// window borrowed it (`present(in:)`). Synthesized events go here.
+  public var window: NSWindow { webView.window ?? hostWindow }
+  /// Holds the web view inside the host window.
+  private let hostView: NSView
 
   /// Image blobs waiting to become the page image's `src`.
   public let blobs = BlobStore()
@@ -72,8 +80,9 @@ public final class ReaderSession: NSObject {
   private var eventNumber = 0
   public private(set) var webContentProcessTerminated = false
 
-  /// - Parameter window: a window to host the reader in; one is created
-  ///   (1280×720, not yet shown) when nil. Its content view is replaced.
+  /// - Parameter window: a window to host the reader in; when nil, an
+  ///   invisible `ReaderHostWindow` (1280×720, off-screen, not yet ordered
+  ///   in — `hostInBackground()` does that). Its content view is replaced.
   public init(window: NSWindow? = nil) {
     let configuration = WKWebViewConfiguration()
     configuration.websiteDataStore = .default()
@@ -92,12 +101,19 @@ public final class ReaderSession: NSObject {
     webView.customUserAgent = ReaderSession.safariUserAgent
     if #available(macOS 13.3, *) { webView.isInspectable = true }
 
-    self.window =
-      window
-      ?? NSWindow(
-        contentRect: NSRect(origin: NSPoint(x: 120, y: 120), size: ReaderSession.viewportSize),
-        styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered,
-        defer: false)
+    if window == nil {
+      // Out of sight must not mean "hidden" to WebKit, or the reader stops
+      // rendering (see ReaderHostWindow.Mode). `KINDLE_EXPORT_HOST_MODE=sliver`
+      // forces the fallback, for testing it.
+      let host = ReaderHostWindow(size: ReaderSession.viewportSize)
+      let forceSliver = ProcessInfo.processInfo.environment["KINDLE_EXPORT_HOST_MODE"] == "sliver"
+      host.mode =
+        !forceSliver && ReaderSession.disableWindowOcclusionDetection(webView) ? .offscreen : .sliver
+      hostWindow = host
+    } else {
+      hostWindow = window!
+    }
+    hostView = NSView(frame: NSRect(origin: .zero, size: ReaderSession.viewportSize))
     super.init()
 
     let proxy = WeakMessageHandler(self)
@@ -105,27 +121,78 @@ public final class ReaderSession: NSObject {
     controller.add(proxy, contentWorld: .page, name: ReaderScripts.netHandler)
     webView.navigationDelegate = self
 
-    self.window.isReleasedWhenClosed = false
-    self.window.acceptsMouseMovedEvents = true
-    self.window.title = "Kindle"
-    self.window.contentView = webView
+    hostWindow.isReleasedWhenClosed = false
+    hostWindow.acceptsMouseMovedEvents = true
+    if window == nil { hostWindow.title = "Kindle" }
+    hostWindow.contentView = hostView
+    hostView.autoresizesSubviews = true
+    webView.autoresizingMask = [.width, .height]
+    hostView.addSubview(webView)
 
     installContentBlocker()
   }
 
   // MARK: - window
 
-  /// Bring the window forward — for signing in.
+  /// Bring the host window forward — for signing in, when the host is an
+  /// ordinary titled window (kexport). The app shows sign-in with
+  /// `present(in:)` instead.
   public func show() {
-    if window.isMiniaturized { window.deminiaturize(nil) }
-    window.makeKeyAndOrderFront(nil)
+    if hostWindow.isMiniaturized { hostWindow.deminiaturize(nil) }
+    hostWindow.makeKeyAndOrderFront(nil)
     NSApp.activate(ignoringOtherApps: true)
   }
 
-  /// Park the window in the Dock so nobody clicks into a running capture.
+  /// Park a titled host window in the Dock so nobody clicks into a running
+  /// capture (kexport).
   public func minimize() {
-    if !window.isVisible { window.orderFront(nil) }
-    window.miniaturize(nil)
+    if !hostWindow.isVisible { hostWindow.orderFront(nil) }
+    hostWindow.miniaturize(nil)
+  }
+
+  /// Keep the reader alive where nobody sees it: in its host window, which
+  /// (for the invisible `ReaderHostWindow`) is ordered in off-screen.
+  public func hostInBackground() {
+    returnToHost()
+    if let host = hostWindow as? ReaderHostWindow { host.orderInOffscreen() }
+  }
+
+  /// Whether the web view is currently borrowed by another window's view.
+  public var isPresented: Bool { webView.superview !== hostView }
+
+  /// Show the reader inside `container` (a view in another window) — the
+  /// same web view, moved, so the session, the hooks and the loaded page all
+  /// carry on. It fills the container and follows its size.
+  public func present(in container: NSView) {
+    guard webView.superview !== container else { return }
+    webView.removeFromSuperview()
+    webView.frame = container.bounds
+    webView.autoresizingMask = [.width, .height]
+    container.addSubview(webView)
+  }
+
+  /// Take the web view back from whoever borrowed it, at the capture's
+  /// viewport size.
+  public func returnToHost() {
+    if webView.superview !== hostView {
+      webView.removeFromSuperview()
+      hostView.addSubview(webView)
+    }
+    hostView.frame = NSRect(origin: .zero, size: ReaderSession.viewportSize)
+    if hostWindow.contentView !== hostView { hostWindow.contentView = hostView }
+    hostWindow.setContentSize(ReaderSession.viewportSize)
+    webView.frame = hostView.bounds
+  }
+
+  /// Tell WebKit not to treat the web view as hidden when its window is off
+  /// every screen (WKWebView SPI `_setWindowOcclusionDetectionEnabled:`,
+  /// present since macOS 10.13). `false` when this WebKit doesn't have it.
+  static func disableWindowOcclusionDetection(_ webView: WKWebView) -> Bool {
+    let selector = NSSelectorFromString("_setWindowOcclusionDetectionEnabled:")
+    guard let method = class_getInstanceMethod(WKWebView.self, selector) else { return false }
+    typealias Setter = @convention(c) (AnyObject, Selector, Bool) -> Void
+    unsafeBitCast(method_getImplementation(method), to: Setter.self)(webView, selector, false)
+    return true
   }
 
   // MARK: - navigation

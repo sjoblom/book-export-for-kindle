@@ -3,10 +3,10 @@ import KindleExportKit
 
 // Kindle Export.app — the native app (see ../../PLAN.md, "Wave 2").
 //
-// One process, two windows: the main window shows the UI page (the same page
-// `kindle-export serve` serves, talking to AppModel through the bridge), and
-// the "Amazon" window hosts the Kindle reader web view, parked in the Dock
-// except while the person signs in.
+// One process, one visible window: it shows the UI page (the same page
+// `kindle-export serve` serves, talking to AppModel through the bridge), or,
+// while Amazon wants a sign-in, Amazon's page under a native bar. The Kindle
+// reader web view otherwise lives in an invisible off-screen host window.
 
 MainActor.assumeIsolated {
   let app = NSApplication.shared

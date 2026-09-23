@@ -51,12 +51,16 @@ export function renderPage(options: RenderPageOptions = {}): string {
  * EventSource at all and the browser page no bridge hooks.
  */
 
-const HTTP_TRANSPORT = `// Where Amazon runs: kindle-export serve drives a separate Chrome window.
+const HTTP_TRANSPORT = `// Where Amazon runs: kindle-export serve drives a separate Chrome window,
+// which the person signs in in while this page waits.
 var READER = {
-  window: 'the Chrome window',
-  opens: 'A Chrome window opens',
-  opened: 'A Chrome window has opened',
-  reading: 'Chrome is reading the book in a minimized window'
+  signingInStatus: 'Waiting for you to sign in to Amazon…',
+  signingIn: {
+    title: 'Sign in to Amazon in the Chrome window',
+    text: 'A Chrome window has opened on Amazon’s sign-in page. Sign in the way you always do — including any code Amazon sends you. The window closes by itself when you’re done. This app never sees your password.'
+  },
+  signIn: 'A Chrome window opens on Amazon’s own sign-in page. Your password is never seen or stored by this app.',
+  reading: 'Chrome is reading the book in a minimized window — no need to touch it. It closes on its own; if Amazon wants you to sign in, it pops up by itself.'
 }
 
 function request(method, path, body) {
@@ -104,12 +108,14 @@ function downloadControl(attrs, asin, name) {
   return el('a', attrs)
 }`
 
-const BRIDGE_TRANSPORT = `// Where Amazon runs: the app's own Amazon window — there is no Chrome.
+const BRIDGE_TRANSPORT = `// Where Amazon runs: inside the app, out of sight — there is no Chrome and
+// no second window. For sign-in the app shows Amazon's page in place of this
+// one, so there is nothing to point at here while it is up.
 var READER = {
-  window: 'the Amazon window',
-  opens: 'The Amazon window opens',
-  opened: 'The Amazon window has opened',
-  reading: 'The book is being read in the minimized Amazon window'
+  signingInStatus: 'Signing in to Amazon…',
+  signingIn: null,
+  signIn: 'Opens Amazon’s sign-in page in this window.',
+  reading: 'Reading the book — this takes a while; you can keep using your Mac.'
 }
 
 // A reply that never comes (the app busy, or a bug on the Swift side) must
@@ -1053,7 +1059,7 @@ function renderStatus() {
   var updated = state.library ? ' · updated ' + ago(state.library.fetchedAt) : ''
 
   if (state.amazon === 'signing-in') {
-    text = 'Waiting for you to sign in to Amazon…'
+    text = READER.signingInStatus
     dot = 'busy'
   } else if (state.busy === 'library') {
     text = state.library ? plural(count, 'book', 'books') + ' · checking for new books…' : 'Loading your library…'
@@ -1164,11 +1170,9 @@ function renderNotices() {
   }
 
   if (state.amazon === 'signing-in') {
-    holder.appendChild(notice('', 'window', 'Sign in to Amazon in ' + READER.window,
-      READER.opened + ' on Amazon’s sign-in page. Sign in the way you always do — including any code Amazon sends you. The window closes by itself when you’re done. This app never sees your password.'))
+    if (READER.signingIn) holder.appendChild(notice('', 'window', READER.signingIn.title, READER.signingIn.text))
   } else if (state.amazon === 'signed-out') {
-    holder.appendChild(notice('warn', 'user', 'Sign in to Amazon to see your books',
-      READER.opens + ' on Amazon’s own sign-in page. Your password is never seen or stored by this app.',
+    holder.appendChild(notice('warn', 'user', 'Sign in to Amazon to see your books', READER.signIn,
       [el('button', { class: 'btn primary', type: 'button', text: 'Sign in to Amazon', disabled: !!state.busy, onclick: signIn })]))
   }
 
@@ -1191,7 +1195,7 @@ function renderNotices() {
     if (active) {
       title = 'Exporting “' + titleOf(active.asin, active.title) + '”'
       text = active.status === 'capturing' || active.status === 'working'
-        ? READER.reading + ' — no need to touch it. It closes on its own; if Amazon wants you to sign in, it pops up by itself.'
+        ? READER.reading
         : 'Almost there — the pages are captured and are being turned into text.'
       if (waiting) text += ' ' + plural(waiting, 'more book', 'more books') + ' waiting.'
     } else {

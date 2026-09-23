@@ -121,7 +121,49 @@ launch (showing the reader window), queue with remove/stop-after-current,
 per-book status from pipeline events, disk scan (BookStatus), alsoPdf setting
 (stored in ~/.kindle-export/config.json like the CLI), API key state is moot
 (no OpenAI in the app: `needsApiKey` always false, `localOcr` true).
-Windows: the main window hosts the UI page; a second "Amazon" window hosts the
-ReaderSession (hidden/minimized during capture and library refresh, shown for
-sign-in). Menus: Edit (copy/paste), View › Reload, Window, Show Books in
+Windows: ONE visible window. The main window hosts the UI page; the
+ReaderSession's web view lives in an invisible `ReaderHostWindow` (borderless,
+ordered in off-screen, excluded from the Windows menu, `.transient` +
+`.ignoresCycle`, never key/main, never minimized) during capture and library
+refresh. When Amazon wants a sign-in (auto sign-in at launch, the "Sign in to
+Amazon" button, or mid-capture via CaptureEngine's signInHandler),
+NativeBackend sets `placement = .signIn` and the app moves the *same* web view
+into the main window under a native `SignInView` bar ("Sign in to Amazon to
+see your books" + Cancel), faded in over the page (which stays loaded
+underneath). A signed-in reader URL seen on two consecutive polls (not
+loading) or Cancel sets `placement = .background` and the web view goes back
+to the host at 1280×720. Synthesized events go to `webView.window`, whichever
+window that is. Verified: a full capture (page turns, Go to Page, settings
+clicks) runs in the off-screen host window — see "Off-screen hosting" below.
+Developer autotest: `KINDLE_EXPORT_AUTOTEST=<ASIN> [KINDLE_EXPORT_OUT_DIR=<dir>]`
+exports one book with no one at the keyboard and writes
+`<outDir>/autotest-result.json`, then quits. Menus: Edit (copy/paste), View › Reload, Window, Show Books in
 Finder. Quit while exporting asks first. Books go to ~/Documents/Kindle Export.
+
+### Off-screen hosting (verified September 2026)
+
+Measured with the autotest on "How to Live" (B09Y7P4DR6, 116 pages, 210
+screens):
+
+- Borderless window ordered in far outside every screen, nothing else: WebKit
+  reports the page hidden (`visibilityState` "hidden", no
+  `requestAnimationFrame`), the reader never lays out its toolbar ("Reader
+  settings button not found"). AppKit's `occlusionState` still says visible;
+  WebKit decides on its own.
+- Same, at a level below the desktop with `.canJoinAllSpaces`: hidden too.
+- **Off-screen + `WKWebView._setWindowOcclusionDetectionEnabled:NO`** (SPI,
+  called through the runtime, present since macOS 10.13): page visible, rAF at
+  60 fps, full capture complete — 210 screens, end-of-book, restore OK, ~2.5
+  min. This is the default.
+- **Sliver** (1 pt of the window on the main screen's corner, alpha 0.01,
+  below the desktop level; public API only): also visible and a full capture
+  completes identically. Used automatically when the SPI is missing;
+  `KINDLE_EXPORT_HOST_MODE=sliver` forces it.
+- Minimized (the old approach) was not needed.
+
+Found along the way: WebKit's reader renders pages further ahead than
+Chrome's — the blob for screen 10 arrived while screen 1 was consumed — so
+BlobStore's age limit (8 consumptions, as extract-kindle-book.ts) aged it out
+and failed every capture at screen 10. The default is now 32 (bounded by
+`maxCount` 64).
+

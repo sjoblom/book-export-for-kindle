@@ -15,7 +15,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
   private var model: AppModel!
   private var bridge: Bridge!
   private var window: NSWindow!
+  /// The library UI (the page). Stays loaded, hidden, while sign-in shows.
   private var webView: WKWebView!
+  /// Amazon's sign-in with the app's bar above it, in place of the page.
+  private var signInView: SignInView!
   /// The page currently shown, when it is the real UI (not an error page).
   private var pageURL: URL?
 
@@ -32,7 +35,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
     buildWindow()
     loadPage()
 
+    backend.onPlacementChange = { [weak self] placement in self?.placeReader(placement) }
+
     Task { @MainActor in await self.model.start() }
+    Autotest.startIfAsked(model: model, backend: backend, environment: environment)
   }
 
   // MARK: - window
@@ -59,7 +65,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
       backing: .buffered, defer: false)
     window.title = "Kindle Export"
     window.minSize = NSSize(width: 520, height: 480)
-    window.contentView = webView
+
+    // One window, two faces: the page, or Amazon's sign-in. Both fill it;
+    // only one is visible at a time.
+    let content = NSView(frame: NSRect(x: 0, y: 0, width: 960, height: 760))
+    signInView = SignInView(frame: content.bounds)
+    signInView.isHidden = true
+    signInView.onCancel = { [weak self] in self?.backend.cancelSignIn() }
+    for view in [webView!, signInView!] as [NSView] {
+      view.frame = content.bounds
+      view.autoresizingMask = [.width, .height]
+      content.addSubview(view)
+    }
+    window.contentView = content
     window.delegate = self
     window.isReleasedWhenClosed = false
     window.center()
@@ -105,8 +123,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
       .replacingOccurrences(of: ">", with: "&gt;")
   }
 
-  /// Closing the main window is quitting (which asks first mid-export). The
-  /// Amazon window doesn't count: it is part of the machinery.
+  /// Swap what the window shows. The reader's web view is the same one the
+  /// whole time — moved between the invisible host window and this one — so
+  /// its session and page carry on; the page stays loaded underneath.
+  private func placeReader(_ placement: NativeBackend.ReaderPlacement) {
+    let session = backend.session
+    switch placement {
+    case .signIn:
+      // Move the (already loaded) reader into the laid-out sign-in view, then
+      // fade that in over the page. The page stays where it is underneath,
+      // never hidden, so neither direction shows a blank frame, and the
+      // window keeps its size and place.
+      signInView.alphaValue = 0
+      signInView.isHidden = false
+      signInView.layoutSubtreeIfNeeded()
+      session.present(in: signInView.readerSlot)
+      showWindow()
+      window.makeFirstResponder(session.webView)
+      NSAnimationContext.runAnimationGroup { context in
+        context.duration = 0.15
+        signInView.animator().alphaValue = 1
+      }
+
+    case .background:
+      // Straight back to the page, which stayed loaded (and up to date)
+      // underneath; the reader goes back to its host before any background
+      // work drives it again.
+      signInView.isHidden = true
+      signInView.alphaValue = 1
+      session.hostInBackground()
+      window.makeFirstResponder(webView)
+    }
+  }
+
+  /// Closing the main window is quitting (which asks first mid-export).
   func windowShouldClose(_ sender: NSWindow) -> Bool {
     guard sender === window else { return true }
     NSApp.terminate(nil)

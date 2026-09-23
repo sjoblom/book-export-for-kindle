@@ -646,15 +646,28 @@ describe('page transport', () => {
     for (const url of urls) expect(url).toMatch(/^(data:|https:)/)
   })
 
-  it('names the window Amazon actually runs in', () => {
-    // The app has no Chrome: telling someone to sign in "in the Chrome
-    // window" sends them looking for a window that doesn't exist.
+  it('describes where Amazon actually runs', () => {
+    // The app has no Chrome and no second window: sign-in shows Amazon's page
+    // in place of this one, and books are read out of sight.
     const bridge = pageScript(renderPage({ transport: 'bridge' }))
-    expect(bridge).toContain("window: 'the Amazon window'")
-    expect(bridge).not.toMatch(/Chrome window|A Chrome window/)
+    expect(bridge).not.toMatch(
+      /Chrome window|A Chrome window|Amazon window|minimized/
+    )
+    expect(bridge).toContain(
+      "signIn: 'Opens Amazon’s sign-in page in this window.'"
+    )
+    expect(bridge).toContain(
+      "reading: 'Reading the book — this takes a while; you can keep using your Mac.'"
+    )
+    expect(bridge).toContain('signingIn: null')
 
+    // kindle-export serve keeps pointing at its Chrome window.
     const http = pageScript(renderPage())
-    expect(http).toContain("window: 'the Chrome window'")
+    expect(http).toContain("title: 'Sign in to Amazon in the Chrome window'")
+    expect(http).toContain('Chrome is reading the book in a minimized window')
+    expect(http).toContain(
+      'A Chrome window opens on Amazon’s own sign-in page.'
+    )
   })
 
   it('bridge mode sends requests and settles them from replies', async () => {
