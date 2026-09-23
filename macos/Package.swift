@@ -14,6 +14,12 @@ let package = Package(
       dependencies: ["KindleExportKit"],
       path: "Sources/KindleExport"
     ),
+    // Developer tool: drive a capture from the terminal (`kexport capture`).
+    .executableTarget(
+      name: "kexport",
+      dependencies: ["KindleExportKit"],
+      path: "Sources/kexport"
+    ),
     .testTarget(
       name: "KindleExportKitTests",
       dependencies: ["KindleExportKit"],

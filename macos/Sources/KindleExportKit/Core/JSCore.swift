@@ -44,17 +44,21 @@ public final class JSCore {
     if let loadError { throw ScriptError(function: "<load>", message: loadError) }
 
     // One JS-side trampoline does the JSON crossing, so a thrown JS error comes
-    // back as data instead of relying on the exception handler per call.
+    // back as data instead of relying on the exception handler per call. The
+    // reply is a one-letter tag (O = ok, E = error) followed by the payload,
+    // and the result's JSON text is passed through untouched: re-encoding it
+    // on the Swift side would reorder object keys, and metadata.json has to
+    // match what the Node pipeline writes.
     context.evaluateScript(
       """
       globalThis.__kindleCoreInvoke = function (name, argsJson) {
         try {
           const fn = globalThis.KindleCore && globalThis.KindleCore[name];
-          if (typeof fn !== 'function') return JSON.stringify({ error: 'no such function: ' + name });
+          if (typeof fn !== 'function') return 'E' + 'no such function: ' + name;
           const result = fn.apply(null, JSON.parse(argsJson));
-          return JSON.stringify({ ok: result === undefined ? null : result });
+          return 'O' + JSON.stringify(result === undefined ? null : result);
         } catch (e) {
-          return JSON.stringify({ error: e && e.message !== undefined ? e.message + (e.stack ? '\\n' + e.stack : '') : String(e) });
+          return 'E' + (e && e.message !== undefined ? e.message + (e.stack ? '\\n' + e.stack : '') : String(e));
         }
       };
       """)
@@ -89,18 +93,14 @@ public final class JSCore {
     let argsJson = "[" + encoded.joined(separator: ",") + "]"
 
     guard let reply = invoke.call(withArguments: [name, argsJson])?.toString(),
-      let replyData = reply.data(using: .utf8),
-      let object = try JSONSerialization.jsonObject(with: replyData, options: [.fragmentsAllowed])
-        as? [String: Any]
+      let tag = reply.first
     else {
       throw ScriptError(function: name, message: "no reply from JavaScript")
     }
 
-    if let error = object["error"] as? String {
-      throw ScriptError(function: name, message: error)
-    }
-    return try JSONSerialization.data(
-      withJSONObject: object["ok"] ?? NSNull(), options: [.fragmentsAllowed])
+    let payload = String(reply.dropFirst())
+    guard tag == "O" else { throw ScriptError(function: name, message: payload) }
+    return Data(payload.utf8)
   }
 
   static func locateScript() -> URL? {
