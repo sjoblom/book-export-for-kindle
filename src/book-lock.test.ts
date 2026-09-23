@@ -1,4 +1,4 @@
-import { execFile } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
@@ -412,6 +412,64 @@ describe('withBookLock', () => {
   }, 30_000)
 })
 
+/**
+ * An owner file byte for byte as BookLock.swift writes it (OrderedJSON,
+ * pretty-printed, fractional-second timestamp, lowercased UUID token).
+ */
+async function plantSwiftLock(pid: number, command: string) {
+  const token = 'a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d'
+  const lockDir = bookLockPath(bookDir)
+  await fs.mkdir(lockDir)
+  await fs.writeFile(
+    path.join(lockDir, `owner-${pid}-${token}.json`),
+    `{\n  "pid": ${pid},\n  "token": "${token}",\n` +
+      `  "startedAt": "2026-09-23T10:00:00.123Z",\n  "command": "${command}"\n}`
+  )
+}
+
+describe('locks taken by the native app and kexport', () => {
+  it('treats a live kexport capture as the owner, with the real probes', async () => {
+    // A real process whose command line reads as the kexport binary, as `ps`
+    // sees it. Installed away from the repo, so no "kindle-export" in the path
+    // can match for it.
+    const child = spawn('/bin/sleep', ['30'], {
+      argv0: '/opt/tools/kexport',
+      stdio: 'ignore'
+    })
+    try {
+      await new Promise((resolve) => child.once('spawn', resolve))
+      await plantSwiftLock(child.pid!, 'kexport capture')
+
+      const thrown = await withBookLock(bookDir, async () => 'entered').catch(
+        (err: unknown) => err
+      )
+      expect(isBookBusyError(thrown)).toBe(true)
+      expect(String(thrown)).toContain('(kexport capture)')
+      expect(String(thrown)).toContain(`(pid ${child.pid})`)
+      // Left exactly as the owner wrote it.
+      expect(await fs.readdir(bookLockPath(bookDir))).toHaveLength(1)
+    } finally {
+      child.kill()
+    }
+
+    await new Promise((resolve) => child.once('exit', resolve))
+    // Once it has gone, its lock is stale and taken over.
+    expect(await withBookLock(bookDir, async () => 'entered')).toBe('entered')
+    expect(await lockExists()).toBe(false)
+  })
+
+  it('treats a live native app as the owner', async () => {
+    await plantSwiftLock(process.pid, 'app all')
+    const thrown = await withBookLock(bookDir, async () => 'entered', {
+      commandLine: async () =>
+        '/Applications/Kindle Export.app/Contents/MacOS/Kindle Export'
+    }).catch((err: unknown) => err)
+
+    expect(isBookBusyError(thrown)).toBe(true)
+    expect(String(thrown)).toContain('(app all)')
+  })
+})
+
 describe('ownerLooksLive', () => {
   it('recognises the ways this tool is run', () => {
     expect(
@@ -422,6 +480,10 @@ describe('ownerLooksLive', () => {
       ownerLooksLive(
         '/Applications/Kindle Export.app/Contents/MacOS/Kindle Export'
       )
+    ).toBe(true)
+    expect(ownerLooksLive('macos/.build/debug/KindleExport')).toBe(true)
+    expect(
+      ownerLooksLive('macos/.build/debug/kexport capture B00X --out out')
     ).toBe(true)
   })
 

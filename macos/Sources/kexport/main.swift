@@ -12,6 +12,10 @@ import KindleExportKit
 // window is shown and the person has --sign-in-timeout seconds (default 300;
 // 0 = fail at once) to complete it.
 //
+// The book's lock (<dir>/<ASIN>/.lock, shared with the app and the Node tool)
+// is held for the whole capture, so kexport never writes pages or
+// metadata.json under a run that is reading or rewriting them.
+//
 // Note: WKWebsiteDataStore.default() is per executable, so kexport keeps its
 // own Amazon session, separate from the app's.
 
@@ -100,6 +104,23 @@ final class Runner: NSObject, NSApplicationDelegate {
   }
 
   func capture() async -> Int32 {
+    // Taken before any window opens, so a busy book fails at once instead of
+    // after a sign-in. `withLock` releases it however the capture ends.
+    let bookDir = arguments.outDir.appendingPathComponent(arguments.asin, isDirectory: true)
+    do {
+      return try await BookLock.withLock(bookDir: bookDir, command: "kexport capture") {
+        await captureLocked()
+      }
+    } catch let busy as BookBusyError {
+      log("error: \(busy.localizedDescription)")
+      return 1
+    } catch {
+      log("error: could not lock \(bookDir.path): \(error)")
+      return 1
+    }
+  }
+
+  func captureLocked() async -> Int32 {
     let core: JSCore
     do {
       core = try JSCore()

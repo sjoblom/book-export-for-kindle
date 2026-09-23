@@ -137,6 +137,103 @@ final class PipelineLockTests: XCTestCase {
     XCTAssertThrowsError(try BookLock.acquire(bookDir: bookDir, probes: probes))
   }
 
+  /// Start `path` with `argv0` as its command name — what `ps` and the
+  /// command-line probe then report — and return its pid.
+  private func spawn(_ path: String, argv0: String, _ args: [String]) throws -> pid_t {
+    var pid: pid_t = 0
+    let argv = ([argv0] + args).map { strdup($0) } + [nil]
+    defer { argv.forEach { free($0) } }
+    let status = posix_spawn(&pid, path, nil, nil, argv, environ)
+    guard status == 0 else { throw POSIXError(POSIXErrorCode(rawValue: status) ?? .EIO) }
+    return pid
+  }
+
+  private func stop(_ pid: pid_t) {
+    kill(pid, SIGKILL)
+    var status: Int32 = 0
+    waitpid(pid, &status, 0)
+  }
+
+  /// kexport takes the lock for its captures; a live one must keep the app
+  /// (and Node, which shares the pattern) out, judged by the real probes.
+  func testBusyWhenALiveKexportHoldsIt() throws {
+    let bookDir = try PipelineFixtures.tempDir("lock")
+    // Installed away from the repo, so no "kindle-export" in its path can
+    // match for it.
+    let pid = try spawn("/bin/sleep", argv0: "/opt/tools/kexport", ["30"])
+    defer { stop(pid) }
+    try plantOwner(bookDir, pid: pid)
+    XCTAssertEqual(BookLock.processCommandLine(pid), "/opt/tools/kexport 30")
+
+    XCTAssertThrowsError(try BookLock.acquire(bookDir: bookDir)) { error in
+      XCTAssertEqual((error as? BookBusyError)?.pid, pid)
+    }
+
+    stop(pid)
+    // Gone, so its lock is stale.
+    try BookLock.acquire(bookDir: bookDir).release()
+  }
+
+  /// The two implementations against each other: a real Node process holds
+  /// the lock through book-lock.ts, and the native one must see it as busy,
+  /// then take it once Node lets go.
+  func testNodeHoldingTheLockKeepsTheNativeSideOut() async throws {
+    let root = PipelineFixtures.repoRoot
+    let tsx = root.appendingPathComponent("node_modules/tsx")
+    let path = ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"]
+      .joined(separator: ":")
+    let node = path.split(separator: ":").map { "\($0)/node" }
+      .first { FileManager.default.isExecutableFile(atPath: $0) }
+    guard let node, FileManager.default.fileExists(atPath: tsx.path) else {
+      throw XCTSkip("node and the repo's node_modules (tsx) are needed")
+    }
+
+    let bookDir = try PipelineFixtures.tempDir("lock")
+    let work = try PipelineFixtures.tempDir("lock-node")
+    let ready = work.appendingPathComponent("ready")
+    let release = work.appendingPathComponent("release")
+    let script = work.appendingPathComponent("hold.mts")
+    let bookLock = root.appendingPathComponent("src/book-lock.ts").path
+    try """
+      import fs from 'node:fs/promises'
+      import { withBookLock } from \(String(reflecting: bookLock))
+      const [bookDir, ready, release] = process.argv.slice(2)
+      const exists = (p) => fs.access(p).then(() => true, () => false)
+      await withBookLock(bookDir, async () => {
+        await fs.writeFile(ready, '')
+        while (!(await exists(release))) await new Promise((r) => setTimeout(r, 20))
+      }, { command: 'node holder' })
+      """.write(to: script, atomically: true, encoding: .utf8)
+
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: node)
+    process.arguments = ["--import", "tsx", script.path, bookDir.path, ready.path, release.path]
+    process.currentDirectoryURL = root
+    try process.run()
+    defer { if process.isRunning { process.terminate() } }
+
+    let deadline = Date().addingTimeInterval(20)
+    while !FileManager.default.fileExists(atPath: ready.path) {
+      guard process.isRunning, Date() < deadline else {
+        return XCTFail("the Node holder never took the lock")
+      }
+      try await Task.sleep(nanoseconds: 20_000_000)
+    }
+
+    XCTAssertThrowsError(try BookLock.acquire(bookDir: bookDir)) { error in
+      let busy = error as? BookBusyError
+      XCTAssertEqual(busy?.pid, process.processIdentifier)
+      XCTAssertEqual(busy?.command, "node holder")
+    }
+
+    try Data().write(to: release)
+    process.waitUntilExit()
+    XCTAssertEqual(process.terminationStatus, 0)
+    // Node released it the way the native side does: nothing left behind.
+    XCTAssertFalse(FileManager.default.fileExists(atPath: BookLock.lockPath(bookDir).path))
+    try BookLock.acquire(bookDir: bookDir).release()
+  }
+
   func testCommandLineProbeAndPattern() {
     let own = BookLock.processCommandLine(getpid())
     XCTAssertNotNil(own)
@@ -146,6 +243,7 @@ final class PipelineLockTests: XCTestCase {
     XCTAssertTrue(BookLock.ownerLooksLive("/usr/local/bin/node /x/kindle-export/dist/cli.js"))
     XCTAssertTrue(BookLock.ownerLooksLive("/Applications/Kindle Export.app/Contents/MacOS/x"))
     XCTAssertTrue(BookLock.ownerLooksLive(".build/debug/KindleExport"))
+    XCTAssertTrue(BookLock.ownerLooksLive(".build/debug/kexport capture B00X --out out"))
     XCTAssertFalse(BookLock.ownerLooksLive("/usr/bin/vim"))
   }
 }

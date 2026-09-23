@@ -70,7 +70,23 @@ final class FakeBackend: AppBackend {
     }
   }
 
-  func signOut() async { signOuts += 1 }
+  /// Keep sign-out suspended until `releaseSignOut()`, like WebKit clearing
+  /// its data store.
+  var holdSignOut = false
+  private var signOutWaiters: [CheckedContinuation<Void, Never>] = []
+  var signOutWaiting: Bool { !signOutWaiters.isEmpty }
+
+  func releaseSignOut() {
+    holdSignOut = false
+    while !signOutWaiters.isEmpty { signOutWaiters.removeFirst().resume() }
+  }
+
+  func signOut() async {
+    signOuts += 1
+    if holdSignOut {
+      await withCheckedContinuation { signOutWaiters.append($0) }
+    }
+  }
 
   func signIn() async -> Bool {
     logins += 1
@@ -638,6 +654,34 @@ final class AppModelTests: XCTestCase {
     try await Task.sleep(nanoseconds: 50_000_000)
     XCTAssertEqual(backend.logins, logins)
     XCTAssertEqual(reply.body["amazon"] as? String, "signed-out")
+  }
+
+  func testRefusesABookClickedWhileSigningOutAndIsFreeAfterwards() async throws {
+    try await idle()
+    backend.holdSignOut = true
+    let signOut = Task { await self.request("POST", "/api/signout") }
+    try await until("sign-out to start") { backend.signOutWaiting }
+    XCTAssertEqual(model.busy, .login)
+
+    // The session is on its way out: a book queued now could only fail, so
+    // it is refused with a reason the page can show.
+    let export = await request("POST", "/api/export", ["asin": "B00TEST"])
+    XCTAssertEqual(export.status, 409)
+    XCTAssertEqual(
+      export.body["error"] as? String, "Signing out of Amazon — sign in again to export books.")
+    XCTAssertTrue(model.books.isEmpty)
+
+    backend.releaseSignOut()
+    await assertEqual(signOut.value.status, 200)
+    XCTAssertNil(model.busy)
+    XCTAssertEqual(model.amazon, .signedOut)
+
+    // Once signed out, a book is accepted and runs (it is up to the pipeline
+    // to ask for a sign-in) — nothing is left queued without a runner.
+    _ = await post("/api/export", ["asin": "B00TEST"])
+    try await until("the book to run") { backend.calls.count == 1 }
+    try await idle()
+    XCTAssertEqual(queued(), ["B00TEST:done"])
   }
 
   func testRefusesToSignOutWhileExporting() async throws {

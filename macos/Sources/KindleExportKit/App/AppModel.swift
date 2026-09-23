@@ -47,6 +47,11 @@ public final class AppModel {
   public private(set) var autoSignInUsed = false
   /// A refresh came due while an export held the session; run it afterwards.
   private var refreshAfterQueue = false
+  /// Sign-out is removing the Amazon session. `busy` reads `.login` then, as
+  /// during sign-in, but a book clicked now is refused rather than queued:
+  /// behind a sign-in it would run once the person is signed in, behind a
+  /// sign-out it could only fail for want of a session.
+  private var signingOut = false
   private var disposed = false
 
   /// Called with the state JSON (what serve.ts streams on /api/events),
@@ -332,6 +337,7 @@ public final class AppModel {
     }
 
     busy = .login
+    signingOut = true
     broadcast()
     await backend.signOut()
     try? FileManager.default.removeItem(at: LibraryCache.path(in: environment.libraryCacheDir))
@@ -341,8 +347,12 @@ public final class AppModel {
     amazon = .signedOut
     // Signing out is deliberate; the sign-in page shouldn't reopen by itself.
     autoSignInUsed = true
-    busy = nil
-    broadcast()
+    // A refresh that came due meanwhile would only find nobody signed in.
+    refreshAfterQueue = false
+    signingOut = false
+    // The same hand-over as every other session task, so nothing that did
+    // get queued while signing out is left without a runner.
+    releaseSession()
   }
 
   private func startLogin() throws {
@@ -449,6 +459,10 @@ public final class AppModel {
 
   private func enqueue(_ body: Any) throws {
     let request = try Self.parseExportRequest(body)
+
+    if signingOut {
+      throw AppHTTPError(409, "Signing out of Amazon — sign in again to export books.")
+    }
 
     // A second click on a book that is already waiting or exporting is the
     // same request again, not a second export.
