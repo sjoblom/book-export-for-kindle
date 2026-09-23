@@ -6,17 +6,27 @@ import path from 'node:path'
 
 import PDFDocument from 'pdfkit'
 
-import type { BookMetadata } from './types'
-import { readContentChunks } from './content-store'
+import type { BookMetadata, ContentChunk } from './types'
+import { readContentStore, selectReusableChunks } from './content-store'
 import { formatContentChunks } from './postprocess-text'
 import { resolveBookSections } from './toc-sections'
-import { assert } from './utils'
+import { assert, normalizeAuthors } from './utils'
 
 export interface ExportBookPdfOptions {
   asin: string
   /** Root directory holding one folder per ASIN. Defaults to `out`. */
   outDir?: string
+  /**
+   * The book's text, when the caller has already read it.
+   *
+   * It is filtered against the metadata on disk exactly as `content.json`
+   * would be, so passing it saves a read without widening what gets exported.
+   */
+  content?: ContentChunk[]
 }
+
+/** Section title sizes by TOC depth; anything deeper uses the last one. */
+const SECTION_TITLE_FONT_SIZES = [20, 16, 14]
 
 /**
  * Render an already-transcribed book to PDF.
@@ -25,20 +35,32 @@ export interface ExportBookPdfOptions {
  */
 export async function exportBookPdf({
   asin,
-  outDir: root = 'out'
+  outDir: root = 'out',
+  content: provided
 }: ExportBookPdfOptions): Promise<string> {
   const outDir = path.join(root, asin)
 
-  const content = (await readContentChunks(outDir)) ?? []
   const metadata = JSON.parse(
     await fsp.readFile(path.join(outDir, 'metadata.json'), 'utf8')
   ) as BookMetadata
+  // Export only what the pipeline's checks would accept: text from this
+  // capture's pages, one chunk per page, each with actual text. Rendering
+  // `content.json` as-is would print a stale capture or duplicate pages that
+  // every completeness check had already discounted.
+  const content = selectReusableChunks(
+    provided
+      ? { captureId: metadata.captureId, chunks: provided }
+      : await readContentStore(outDir),
+    metadata
+  )
   assert(content.length, 'no book content found')
   assert(metadata.meta, 'invalid book metadata: missing meta')
   assert(metadata.toc?.length, 'invalid book metadata: missing toc')
 
   const title = metadata.meta.title
-  const authors = metadata.meta.authorList
+  // Normalized here too: books captured before authors were normalized at
+  // capture time still hold Amazon's raw `Last, First:` string.
+  const authors = normalizeAuthors(metadata.meta.authorList ?? [])
 
   const doc = new PDFDocument({
     autoFirstPage: true,
@@ -94,7 +116,16 @@ export async function exportBookPdf({
     })
 
     ;(doc as any).outline.addItem(tocItem.label)
-    doc.fontSize(tocItem.depth === 1 ? 16 : 20)
+    // Deeper sections get smaller titles so the outline reads as a hierarchy,
+    // but never shrink to body size, where a title would pass for a paragraph.
+    doc.fontSize(
+      SECTION_TITLE_FONT_SIZES[
+        Math.min(
+          Math.max(tocItem.depth, 0),
+          SECTION_TITLE_FONT_SIZES.length - 1
+        )
+      ]!
+    )
     doc.text(tocItem.label, { align: 'center', lineGap: 16 })
 
     doc.fontSize(fontSize)

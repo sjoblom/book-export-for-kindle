@@ -463,8 +463,8 @@ async function processBookLocked(
   for (const format of options.formats) {
     outputs.push(
       format === 'pdf'
-        ? await exportBookPdf({ asin, outDir: options.outDir })
-        : await exportBookMarkdown({ asin, outDir: options.outDir })
+        ? await exportBookPdf({ asin, outDir: options.outDir, content })
+        : await exportBookMarkdown({ asin, outDir: options.outDir, content })
     )
   }
 

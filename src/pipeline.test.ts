@@ -161,6 +161,29 @@ describe('processBook', () => {
     expect(bookFellShort(result, 'capture')).toBe(true)
   })
 
+  it('exports only the text it checked', async () => {
+    // Completeness is judged on the filtered chunks, so rendering the raw file
+    // would print pages the checks had already thrown out.
+    await writeTruncatedBook()
+    const contentFile = path.join(outDir, ASIN, 'content.json')
+    const store = JSON.parse(
+      await fs.readFile(contentFile, 'utf8')
+    ) as ContentStore
+    store.chunks.push({
+      index: 0,
+      page: 1,
+      text: 'A SECOND COPY OF PAGE ONE',
+      screenshot: 'pages/000.png'
+    })
+    await fs.writeFile(contentFile, JSON.stringify(store))
+
+    const { result } = await processFixture('export')
+    const markdown = await fs.readFile(result.outputs[0]!, 'utf8')
+
+    expect(markdown).toContain('page 1')
+    expect(markdown).not.toContain('A SECOND COPY OF PAGE ONE')
+  })
+
   it('says a truncated capture is being reused only once', async () => {
     // The capture stage reports it when it decides to reuse the pages, and the
     // completeness check reports it again at the end; hearing it twice in one
