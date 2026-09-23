@@ -60,9 +60,13 @@ pnpm package
 
 It lands in `dist-app/`. Copy it to the other Mac's `/Applications`, then
 right-click → **Open** → **Open** once — it isn't notarised, so the first
-launch needs that; afterwards it opens with a normal double-click. It shows a
-Dock icon while running, writes books to `~/Documents/Kindle Export`, and
-**Quit** stops the server properly rather than leaving it holding the port.
+launch needs that; afterwards it opens with a normal double-click. The web app
+opens in the app's own window rather than a browser tab, downloads land in
+`~/Downloads`, and books are written to `~/Documents/Kindle Export`. Closing the
+window or choosing **Quit** stops the server properly rather than leaving it
+holding the port, and asks first if a book is still being exported. Amazon
+sign-in and page capture still happen in a separate Chrome window, which the
+capture drives by itself.
 
 If something goes wrong at startup it says so and points at
 `~/Library/Logs/Kindle Export.log`.
