@@ -139,7 +139,7 @@ public final class ReaderSession: NSObject {
   // MARK: - window
 
   /// Bring the host window forward — for signing in, when the host is an
-  /// ordinary titled window (`kindle-export --show`). The app shows sign-in
+  /// ordinary titled window (`book-export --show`). The app shows sign-in
   /// with `present(in:)` instead.
   public func show() {
     if hostWindow.isMiniaturized { hostWindow.deminiaturize(nil) }

@@ -228,7 +228,7 @@ final class PipelineEndToEndTests: XCTestCase {
 
     let pipeline = BookPipeline(
       outDir: outDir, makeCore: { try PipelineFixtures.core() },
-      lockProbes: .init(isAlive: { _ in true }, commandLine: { _ in "node kindle-export" }))
+      lockProbes: .init(isAlive: { _ in true }, commandLine: { _ in "node book-export" }))
     do {
       _ = try await pipeline.process(asin: store.asin)
       XCTFail("expected BookBusyError")

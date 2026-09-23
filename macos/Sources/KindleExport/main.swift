@@ -1,10 +1,10 @@
 import AppKit
 import KindleExportKit
 
-// Kindle Export.app — the native app (see ../../PLAN.md, "Wave 2").
+// Book Export for Kindle.app — the native app (see ../../PLAN.md, "Wave 2").
 //
 // One process, one visible window: it shows the UI page (the same page
-// `kindle-export serve` serves, talking to AppModel through the bridge), or,
+// `book-export serve` serves, talking to AppModel through the bridge), or,
 // while Amazon wants a sign-in, Amazon's page under a native bar. The Kindle
 // reader web view otherwise lives in an invisible off-screen host window.
 

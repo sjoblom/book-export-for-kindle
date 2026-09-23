@@ -2,12 +2,12 @@ import AppKit
 import Foundation
 import KindleExportKit
 
-// kindle-export — the command-line side of Kindle Export.app (see
+// book-export — the command-line side of Book Export for Kindle.app (see
 // ../../PLAN.md, "Command-line tool"). The same engine as the app: the
 // reader in a WKWebView, Vision for the text, KindleCore for everything
 // shared with the Node tool. Commands and flags follow src/cli.ts.
 //
-// It ships inside the app, as `Kindle Export.app/Contents/MacOS/kindle-export`,
+// It ships inside the app, as `Book Export for Kindle.app/Contents/MacOS/book-export`,
 // because that is how it shares the app's Amazon sign-in: WebKit keeps
 // `WKWebsiteDataStore.default()` — cookies included — per bundle identifier
 // (~/Library/HTTPStorages/<id>.binarycookies), and a process gets the app's
@@ -15,7 +15,7 @@ import KindleExportKit
 
 /// Run again from the real file when started through a symlink.
 ///
-/// The PATH link (/usr/local/bin/kindle-export, made by the app's "Install
+/// The PATH link (/usr/local/bin/book-export, made by the app's "Install
 /// Command-Line Tool…") is the usual way in. Bundle.main is worked out from
 /// the path the process was started with and does not resolve links, so run
 /// as the link the tool has no bundle — and WebKit would give it an empty
@@ -37,7 +37,7 @@ func reexecFromRealPathIfLinked() {
   guard strcmp(buffer, real) != 0 else { return }
   setenv(marker, "1", 1)
   // argv[0] becomes the real path too: it is what `ps` — and so the book
-  // lock's check that an owner is still kindle-export — sees, and a link can
+  // lock's check that an owner is still book-export — sees, and a link can
   // be named anything.
   let argv = CommandLine.unsafeArgv
   argv[0] = real
@@ -52,7 +52,7 @@ reexecFromRealPathIfLinked()
 // script's smoke test checks it through a symlink.
 if ProcessInfo.processInfo.environment["KINDLE_EXPORT_DEBUG"] == "1" {
   Terminal.error(
-    "kindle-export: bundle \(Bundle.main.bundleIdentifier ?? "none") at \(Bundle.main.bundlePath)")
+    "book-export: bundle \(Bundle.main.bundleIdentifier ?? "none") at \(Bundle.main.bundlePath)")
 }
 
 let parsed: CommandLineOptions.Parsed
@@ -60,8 +60,8 @@ do {
   parsed = try CommandLineOptions.parse(Array(CommandLine.arguments.dropFirst()))
 } catch {
   // A usage error deserves one line, not a trace.
-  Terminal.error("kindle-export: \(Terminal.describe(error))")
-  Terminal.error("Run 'kindle-export --help' for usage.")
+  Terminal.error("book-export: \(Terminal.describe(error))")
+  Terminal.error("Run 'book-export --help' for usage.")
   exit(1)
 }
 

@@ -67,7 +67,7 @@ public struct PdfRenderer {
     let info: [CFString: Any] = [
       kCGPDFContextTitle: book.title,
       kCGPDFContextAuthor: book.authors.joined(separator: ", "),
-      kCGPDFContextCreator: "Kindle Export",
+      kCGPDFContextCreator: "Book Export for Kindle",
     ]
     guard let context = CGContext(url as CFURL, mediaBox: &mediaBox, info as CFDictionary) else {
       throw RenderError.cannotCreate(url.path)

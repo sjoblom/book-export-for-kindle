@@ -71,7 +71,7 @@ jobs:
       # Node runtime or node_modules sneaking back in shows up here first.
       - name: Check the bundle
         run: |
-          APP="dist-app/Kindle Export.app"
+          APP="dist-app/Book Export for Kindle.app"
           KB="$(du -sk "$APP" | cut -f1)"
           echo "bundle: $((KB / 1024)) MB"
           test "$KB" -lt $((30 * 1024))

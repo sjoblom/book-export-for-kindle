@@ -87,7 +87,7 @@ export function describeIncompleteCapture(
     // instruction for someone in a terminal. Naming both keeps a user who is
     // told one of them able to find the other.
     'the rest of the book is missing — capture it again to get it' +
-      (asin ? `: kindle-export ${asin} --force-capture` : ' (--force-capture)')
+      (asin ? `: book-export ${asin} --force-capture` : ' (--force-capture)')
   ]
 }
 
@@ -147,7 +147,7 @@ export function bookCompleteness({
     warnings.push(
       `${missingPages.length} of ${pages.length} captured pages have no text`,
       asin
-        ? `retry just those pages: kindle-export ${asin}`
+        ? `retry just those pages: book-export ${asin}`
         : 'run the book again to retry just those pages'
     )
   }

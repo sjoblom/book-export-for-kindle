@@ -1,7 +1,7 @@
 # Native macOS app — plan and contracts
 
-Goal: `Kindle Export.app` without Node and without Chrome, ~5–10 MB, with a
-native `kindle-export` command-line tool inside it (see "Command-line tool"
+Goal: `Book Export for Kindle.app` without Node and without Chrome, ~5–10 MB, with a
+native `book-export` command-line tool inside it (see "Command-line tool"
 below). Decision (September 2026): macOS only for now — the Swift engine is
 the product. The Node + patchright CLI (src/cli.ts) is a legacy fallback, the
 only option off macOS, and gets fixes only; it shares the same pure logic and
@@ -31,7 +31,7 @@ macos/
                         PdfRenderer, LibraryService                (wave 1: pipeline)
     App/                AppModel (queue/state), Bridge             (wave 2)
   Sources/KindleExport/ main.swift, windows, menus                 (wave 2)
-  Sources/KindleExportCLI/ the `kindle-export` product: main.swift (re-exec,
+  Sources/KindleExportCLI/ the `book-export` product: main.swift (re-exec,
                         parse), Runner (commands, windows, Ctrl-C)
   Sources/KindleExportKit/CLI/ its pure parts: CommandLineOptions (parse, help,
                         version), CommandLineOutput, CommandLineTool (PATH link)
@@ -100,7 +100,7 @@ result. Errors thrown in JS surface as Swift errors with the JS message.
 The page (src/serve-page.ts) keeps one API vocabulary — the routes and JSON
 bodies of src/serve.ts — and gains a transport layer:
 
-- `kindle-export serve` (browser): `fetch('/api/…')` + `EventSource('/api/events')`
+- `book-export serve` (browser): `fetch('/api/…')` + `EventSource('/api/events')`
   exactly as today.
 - In the app (`window.webkit?.messageHandlers?.kindle` present, or the page
   was rendered with `transport: 'bridge'`):
@@ -174,11 +174,11 @@ BlobStore's age limit (8 consumptions, as extract-kindle-book.ts) aged it out
 and failed every capture at screen 10. The default is now 32 (bounded by
 `maxCount` 64).
 
-## Command-line tool (`kindle-export`, September 2026)
+## Command-line tool (`book-export`, September 2026)
 
 The terminal side of the app, on the same engine, so a Mac needs neither Node
 nor Chrome for the terminal either. Commands and flags follow src/cli.ts
-(`kindle-export [ASIN...]`, `login`, `list [--json] [--limit n]`, `clean`,
+(`book-export [ASIN...]`, `login`, `list [--json] [--limit n]`, `clean`,
 `capture|ocr|export <ASIN...>`, `--out-dir`, `--format`, `--force*`,
 `--keep-pages`, `--concurrency`), plus `--show`; there is no `--model` (Vision
 only), `serve` or `setup`. Books go to `~/Documents/Kindle Export`, the app's
@@ -193,8 +193,8 @@ app: WebKit names it after `Bundle.main.bundleIdentifier`, or the process
 name when there is none (~/Library/HTTPStorages/<id>.binarycookies,
 ~/Library/WebKit/<id>). Measured:
 
-- An unbundled binary (`.build/debug/kindle-export`) gets a store of its own,
-  named `kindle-export` — signed out.
+- An unbundled binary (`.build/debug/book-export`) gets a store of its own,
+  named `book-export` — signed out.
 - Setting `ProcessInfo.processName` (and `setprogname`) to the app's
   identifier before WebKit starts does not help: cookies still went to
   `<process>.binarycookies`.
@@ -213,10 +213,10 @@ name when there is none (~/Library/HTTPStorages/<id>.binarycookies,
   would need macOS 14.
 
 Consequences of running as the app: LaunchServices registers the tool as a
-(UIElement) instance of Kindle Export, so while it runs, opening the app from
+(UIElement) instance of Book Export for Kindle, so while it runs, opening the app from
 Finder or the Dock would only reopen the tool; the tool answers the reopen
 by launching a new instance of the app (`createsNewApplicationInstance`).
-`osascript -e 'quit app "Kindle Export"'` may reach the tool, which treats it
+`osascript -e 'quit app "Book Export for Kindle"'` may reach the tool, which treats it
 as Ctrl-C. Two processes using the same data store at once works (measured),
 but the app and a capturing tool would both drive the same Amazon reading
 session — quit one while the other captures.
@@ -233,10 +233,10 @@ sign-in fails the book at once. `ocr`, `export` and `clean` never start
 AppKit.
 
 **Install.** The app menu's "Install Command-Line Tool…" links
-`/usr/local/bin/kindle-export` (or `~/.local/bin` when that needs an
-administrator) to `Contents/MacOS/kindle-export`; a link rather than a copy,
+`/usr/local/bin/book-export` (or `~/.local/bin` when that needs an
+administrator) to `Contents/MacOS/book-export`; a link rather than a copy,
 because the tool must run from inside the bundle. It replaces only links into
-some `*.app/Contents/MacOS/kindle-export` (a moved app), never anything else
+some `*.app/Contents/MacOS/book-export` (a moved app), never anything else
 (the Node tool's npm link), and never runs sudo — it shows the line to paste.
 "Uninstall…" removes only such links. `--version` is Info.plist's when bundled,
 else `CommandLineOptions.version`; the package script fails when that differs

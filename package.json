@@ -1,5 +1,5 @@
 {
-  "name": "kindle-export",
+  "name": "book-export",
   "version": "0.3.0",
   "description": "Export Kindle books you own as clean markdown, locally.",
   "license": "MIT",
@@ -21,7 +21,7 @@
   },
   "type": "module",
   "bin": {
-    "kindle-export": "./dist/cli.js"
+    "book-export": "./dist/cli.js"
   },
   "files": [
     "dist",
@@ -34,7 +34,7 @@
     "build:app-page": "tsx scripts/build-app-page.ts",
     "build:ocr": "sh scripts/build-vision-ocr.sh",
     "package": "bash scripts/package-app.sh",
-    "kindle-export": "tsx src/cli.ts",
+    "book-export": "tsx src/cli.ts",
     "test": "run-s test:*",
     "test:format": "prettier --check \"**/*.{js,ts,tsx}\"",
     "test:lint": "eslint .",

@@ -2,7 +2,7 @@ import AppKit
 import KindleExportKit
 
 /// The app menu's "Install Command-Line Tool…" and "Uninstall Command-Line
-/// Tool…": a `kindle-export` link on the PATH to the tool inside this app
+/// Tool…": a `book-export` link on the PATH to the tool inside this app
 /// (the logic, and why it is a link, in `CommandLineTool`).
 ///
 /// Nothing here runs as root. Where a folder needs an administrator, the
@@ -43,17 +43,17 @@ final class CommandLineToolMenu: NSObject, NSMenuItemValidation {
     guard FileManager.default.isExecutableFile(atPath: tool.path) else {
       // A development build (`swift run KindleExport`) has no bundle to link to.
       show(
-        "This copy of Kindle Export has no command-line tool",
+        "This copy of Book Export for Kindle has no command-line tool",
         "It is part of the app built with 'pnpm package'. Expected it at \(tool.path).")
       return
     }
 
     let confirm = NSAlert()
-    confirm.messageText = "Install the kindle-export command?"
+    confirm.messageText = "Install the book-export command?"
     confirm.informativeText =
-      "Terminal gets a 'kindle-export' command that exports books like this app does — "
+      "Terminal gets a 'book-export' command that exports books like this app does — "
       + "with the same Amazon sign-in and the same books folder. It is a link to the tool "
-      + "inside Kindle Export, placed in /usr/local/bin (or ~/.local/bin if that folder "
+      + "inside Book Export for Kindle, placed in /usr/local/bin (or ~/.local/bin if that folder "
       + "needs an administrator)."
     confirm.addButton(withTitle: "Install")
     confirm.addButton(withTitle: "Cancel")
@@ -61,7 +61,7 @@ final class CommandLineToolMenu: NSObject, NSMenuItemValidation {
 
     switch CommandLineTool.install(target: tool, directories: directories) {
     case .installed(let link, let fallback):
-      var text = "Try it in Terminal: kindle-export --help"
+      var text = "Try it in Terminal: book-export --help"
       if fallback {
         let directory = link.deletingLastPathComponent().path
         text =
@@ -70,18 +70,18 @@ final class CommandLineToolMenu: NSObject, NSMenuItemValidation {
           + "add this line to ~/.zshrc:\n\nexport PATH=\"\(directory):$PATH\""
         let command = CommandLineTool.linkCommand(
           target: tool, directory: directories[0], sudo: true)
-        show("kindle-export is installed", text, copying: command, copyTitle: "Copy sudo Command")
+        show("book-export is installed", text, copying: command, copyTitle: "Copy sudo Command")
       } else {
-        show("kindle-export is installed", "Installed as \(link.path). " + text)
+        show("book-export is installed", "Installed as \(link.path). " + text)
       }
     case .alreadyInstalled(let link):
-      show("kindle-export is already installed", "It is at \(link.path).")
+      show("book-export is already installed", "It is at \(link.path).")
     case .conflict(let link, let destination, let command):
       let what = destination.map { "a link to \($0)" } ?? "a file"
       show(
-        "Another kindle-export is in the way",
-        "\(link.path) is already \(what) — perhaps the Node version of kindle-export. "
-          + "Kindle Export leaves it alone. To replace it with this app's tool, run this in "
+        "Another book-export is in the way",
+        "\(link.path) is already \(what) — perhaps the Node version of book-export. "
+          + "Book Export for Kindle leaves it alone. To replace it with this app's tool, run this in "
           + "Terminal:\n\n\(command)",
         copying: command)
     case .needsAdmin(let command):
@@ -96,10 +96,10 @@ final class CommandLineToolMenu: NSObject, NSMenuItemValidation {
   @objc private func uninstall() {
     switch CommandLineTool.uninstall(target: tool, directories: directories) {
     case .notInstalled:
-      show("kindle-export is not installed", "There is no kindle-export link to remove.")
+      show("book-export is not installed", "There is no book-export link to remove.")
     case .removed(let links):
       show(
-        "kindle-export is uninstalled",
+        "book-export is uninstalled",
         "Removed \(links.map(\.path).joined(separator: ", ")). Your books are untouched.")
     case .needsAdmin(let removed, let command):
       let done = removed.isEmpty ? "" : "Removed \(removed.map(\.path).joined(separator: ", ")). "

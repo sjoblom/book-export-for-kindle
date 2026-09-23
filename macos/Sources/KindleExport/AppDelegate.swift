@@ -52,7 +52,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
     webView.navigationDelegate = self
     webView.uiDelegate = self
     webView.allowsBackForwardNavigationGestures = false
-    // Web Inspector on demand: `KINDLE_EXPORT_INSPECT=1 open -a "Kindle Export"`.
+    // Web Inspector on demand: `KINDLE_EXPORT_INSPECT=1 open -a "Book Export for Kindle"`.
     if #available(macOS 13.3, *),
       ProcessInfo.processInfo.environment["KINDLE_EXPORT_INSPECT"] == "1"
     {
@@ -64,7 +64,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
       contentRect: NSRect(x: 0, y: 0, width: 960, height: 760),
       styleMask: [.titled, .closable, .miniaturizable, .resizable],
       backing: .buffered, defer: false)
-    window.title = "Kindle Export"
+    window.title = "Book Export for Kindle"
     window.minSize = NSSize(width: 520, height: 480)
 
     // One window, two faces: the page, or Amazon's sign-in. Both fill it;
@@ -110,9 +110,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
       body { font: 15px -apple-system, sans-serif; max-width: 640px; margin: 15vh auto; padding: 0 24px; }
       code { font-size: 12px; }
       </style></head><body>
-      <h2>Kindle Export can't show its window</h2>
+      <h2>Book Export for Kindle can't show its window</h2>
       <p>The page it displays (<code>app.html</code>) is missing from the app.
-      Reinstalling Kindle Export should fix this.</p>
+      Reinstalling Book Export for Kindle should fix this.</p>
       <p>For developers: run <code>pnpm build:app-page</code>, then View › Reload.
       Looked in:</p><ul>\(looked)</ul>
       </body></html>
@@ -293,9 +293,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
     commandLineTool.addItems(to: appMenu)
     appMenu.addItem(NSMenuItem.separator())
     appMenu.addItem(
-      withTitle: "Hide Kindle Export", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
+      withTitle: "Hide Book Export for Kindle", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
     appMenu.addItem(
-      withTitle: "Quit Kindle Export", action: #selector(NSApplication.terminate(_:)),
+      withTitle: "Quit Book Export for Kindle", action: #selector(NSApplication.terminate(_:)),
       keyEquivalent: "q")
     addSubmenu(appMenu, to: mainMenu)
 
@@ -319,7 +319,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
 
     let windowMenu = NSMenu(title: "Window")
     windowMenu.addItem(
-      withTitle: "Kindle Export", action: #selector(showWindow), keyEquivalent: "0"
+      withTitle: "Book Export for Kindle", action: #selector(showWindow), keyEquivalent: "0"
     ).target = self
     windowMenu.addItem(
       withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")

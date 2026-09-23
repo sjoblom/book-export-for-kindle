@@ -152,7 +152,7 @@ interface AppState {
   library?: { books: LibraryBook[]; fetchedAt: number; fromCache: boolean }
   libraryError?: string
   /**
-   * Another kindle-export holds the browser profile. The refresh is retried
+   * Another book-export holds the browser profile. The refresh is retried
    * by itself, so the page can say "trying again shortly" rather than asking
    * for something the person can't do anything about.
    */
@@ -288,7 +288,7 @@ export async function createServeHandle(
   }
 }
 
-/** `kindle-export serve`: start the app, open it, and stay up. */
+/** `book-export serve`: start the app, open it, and stay up. */
 export async function startServer(options: Options): Promise<void> {
   let handle: ServeHandle
   try {
@@ -297,7 +297,7 @@ export async function startServer(options: Options): Promise<void> {
     if ((err as NodeJS.ErrnoException)?.code === 'EADDRINUSE') {
       const port = options.port ?? DEFAULT_PORT
       console.error(
-        `Port ${port} is already in use — is kindle-export serve already running?`
+        `Port ${port} is already in use — is book-export serve already running?`
       )
       console.error(
         `If so, open http://localhost:${port} — otherwise pass --port to pick another.`
@@ -309,7 +309,7 @@ export async function startServer(options: Options): Promise<void> {
     throw err
   }
 
-  console.log(`kindle-export is running at ${handle.url}`)
+  console.log(`book-export is running at ${handle.url}`)
   console.log(
     'Opening it in your browser. Keep this window open while it runs;'
   )
@@ -1149,14 +1149,14 @@ class App {
 }
 
 /**
- * The browser profile is held by a kindle-export run outside this app — the
+ * The browser profile is held by a book-export run outside this app — the
  * server's own jobs are excluded by `requireIdle`, so this is a terminal
  * command. A pid means nothing to the person reading the page; what they can
  * act on is the other window.
  */
 function describeBusyProfile(): string {
   return (
-    'Another kindle-export is using the browser right now. ' +
+    'Another book-export is using the browser right now. ' +
     'Wait for it to finish, or close its Chrome window, then try again.'
   )
 }

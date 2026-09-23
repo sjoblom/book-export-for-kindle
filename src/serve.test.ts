@@ -300,7 +300,7 @@ describe('serve', () => {
   it('serves the app page', async () => {
     const res = await fetch(handle.url + '/')
     expect(res.status).toBe(200)
-    expect(await res.text()).toContain('Kindle Export')
+    expect(await res.text()).toContain('Book Export for Kindle')
   })
 
   it('reports state, including books found on disk', async () => {
@@ -705,7 +705,7 @@ describe('page transport', () => {
     )
     expect(bridge).toContain('signingIn: null')
 
-    // kindle-export serve keeps pointing at its Chrome window.
+    // book-export serve keeps pointing at its Chrome window.
     const http = pageScript(renderPage())
     expect(http).toContain("title: 'Sign in to Amazon in the Chrome window'")
     expect(http).toContain('Chrome is reading the book in a minimized window')
@@ -1072,7 +1072,7 @@ describe('serve start-up', () => {
     try {
       const state = await idle(second.url)
       expect(state.profileBusy).toBe(true)
-      expect(state.libraryError).toMatch(/Another kindle-export/)
+      expect(state.libraryError).toMatch(/Another book-export/)
       expect(browser.logins).toBe(0)
 
       // Retry by hand once the other run is done.

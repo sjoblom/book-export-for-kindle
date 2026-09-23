@@ -1,4 +1,4 @@
-# kindle-export
+# Book Export for Kindle
 
 Export Kindle books you own as clean markdown. On a Mac it runs entirely on
 your own machine — no API key, no network calls beyond Amazon, nothing to pay
@@ -8,16 +8,16 @@ It is for books you have bought, for your own reading. It works against
 Amazon's terms of service, and exports must not be shared — read
 [Scope](#scope) before using it.
 
-- **On a Mac: `Kindle Export.app`.** A native app of a few megabytes — click
+- **On a Mac: `Book Export for Kindle.app`.** A native app of a few megabytes — click
   a book in your library and it becomes a Markdown file (or a PDF). It
-  carries its own command-line tool, `kindle-export`, for the terminal.
+  carries its own command-line tool, `book-export`, for the terminal.
   Neither needs Node or Chrome.
 - **Anywhere else: the legacy Node CLI** (Node + Chrome), which only gets
   fixes now — see [Legacy Node CLI](#legacy-node-cli-unsupported).
 
-## On a Mac: Kindle Export.app
+## On a Mac: Book Export for Kindle.app
 
-`pnpm package` builds `Kindle Export.app` — a native Mac app of a few
+`pnpm package` builds `Book Export for Kindle.app` — a native Mac app of a few
 megabytes that needs nothing else installed: no Node, no Chrome, no API key.
 It runs on macOS 13 or later, and it is made so that someone who never
 touches a terminal can use it alone.
@@ -56,25 +56,25 @@ design and the page ↔ app bridge.
 
 ### Command line on macOS
 
-The app carries a native `kindle-export` command — the same engine (WebKit
+The app carries a native `book-export` command — the same engine (WebKit
 reader, Vision OCR, the shared TypeScript logic in JavaScriptCore), so the
 terminal needs no Node or Chrome either. Install it from the app's menu:
-**Kindle Export › Install Command-Line Tool…** puts a `kindle-export` link in
+**Book Export for Kindle › Install Command-Line Tool…** puts a `book-export` link in
 `/usr/local/bin` (or `~/.local/bin` when `/usr/local/bin` needs an
 administrator — the alert then shows the one `sudo` line to paste if you want
 it there; the app never asks for your password). **Uninstall Command-Line
 Tool…** removes it again. Without installing, run it from the bundle:
-`"/Applications/Kindle Export.app/Contents/MacOS/kindle-export"`.
+`"/Applications/Book Export for Kindle.app/Contents/MacOS/book-export"`.
 
 ```
-kindle-export                        pick books from your library, then export
-kindle-export <ASIN...>              capture, transcribe and export (resumes)
-kindle-export login                  sign in to Amazon (in a window)
-kindle-export list [--json] [--limit n]
-kindle-export clean [ASIN...]        delete working files, keeping the text
-kindle-export capture <ASIN...>      capture page images only
-kindle-export ocr <ASIN...>          transcribe captured pages only
-kindle-export export <ASIN...>       write markdown/PDF from transcribed text only
+book-export                          pick books from your library, then export
+book-export <ASIN...>                capture, transcribe and export (resumes)
+book-export login                    sign in to Amazon (in a window)
+book-export list [--json] [--limit n]
+book-export clean [ASIN...]          delete working files, keeping the text
+book-export capture <ASIN...>        capture page images only
+book-export ocr <ASIN...>            transcribe captured pages only
+book-export export <ASIN...>         write markdown/PDF from transcribed text only
 ```
 
 Options: `--format md,pdf`, `--out-dir <dir>`, `--concurrency <n>`,
@@ -85,13 +85,13 @@ the reader turn pages instead of doing it out of sight), `-h`/`--help`,
 It is the app's command line, not a separate tool:
 
 - **Same sign-in.** WebKit keeps a Mac app's cookies per bundle identifier,
-  and the tool lives inside the app bundle (`Contents/MacOS/kindle-export`)
+  and the tool lives inside the app bundle (`Contents/MacOS/book-export`)
   and runs as the app — through the PATH link it re-executes itself from the
   real path so it does. Signing in in either signs in both. If Amazon wants a
   sign-in mid-run, its page opens in a window (and a Dock icon appears for as
   long as it's open); otherwise the tool stays out of the Dock and never takes
   focus. Without a terminal to answer (a script, cron), it fails with a hint
-  to run `kindle-export login` instead of waiting for someone.
+  to run `book-export login` instead of waiting for someone.
 - **Same books.** Books go to `~/Documents/Kindle Export` unless `--out-dir`
   says otherwise, so a book started in the terminal shows up in the app and the
   other way round. The per-book lock keeps the two from working on the same
@@ -191,14 +191,14 @@ captured pages, so the label match is what actually pins a chapter down.
 ## Legacy Node CLI (unsupported)
 
 The original command-line tool, in Node with a Chrome window for the reader
-(`src/cli.ts`, `pnpm kindle-export`). On macOS it is superseded by the app and
-its `kindle-export` command above; it stays because it is **the only option
+(`src/cli.ts`, `pnpm book-export`). On macOS it is superseded by the app and
+its `book-export` command above; it stays because it is **the only option
 off macOS** (with OpenAI reading the pages there), and it gets fixes only — no
 new features. Its books go to `./out` by default, and its Amazon session is a
 Chrome profile of its own (`~/.kindle-export/profile`), separate from the app's.
-Both are called `kindle-export`: on a Mac that has the app's command, run the
-Node one as `pnpm kindle-export` rather than `npm link`-ing it over the other
-(the app's installer won't replace an existing `kindle-export` link it didn't
+Both are called `book-export`: on a Mac that has the app's command, run the
+Node one as `pnpm book-export` rather than `npm link`-ing it over the other
+(the app's installer won't replace an existing `book-export` link it didn't
 make).
 
 ### Install
@@ -210,21 +210,21 @@ succeeds and transcription falls back to OpenAI.
 
 ```bash
 git clone https://github.com/sjoblom/kindle-export
-cd kindle-export
+cd book-export
 pnpm install
 pnpm build
-npm link          # optional: puts `kindle-export` on your PATH
+npm link          # optional: puts `book-export` on your PATH
 ```
 
-Without `npm link`, run it as `pnpm kindle-export <args>`.
+Without `npm link`, run it as `pnpm book-export <args>`.
 
-There is nothing you have to configure on macOS. `kindle-export setup` asks
+There is nothing you have to configure on macOS. `book-export setup` asks
 where books should go and offers to sign in to Amazon; off macOS it also asks
 for the OpenAI key that reading pages needs there. Both are stored in
 `~/.kindle-export/config.json`:
 
 ```bash
-kindle-export setup
+book-export setup
 ```
 
 (A key in `.env` or the environment also works and takes precedence; the web
@@ -234,7 +234,7 @@ Sign in once. This opens a browser, lets you complete login and 2FA
 yourself, and stores the session under `~/.kindle-export/profile`:
 
 ```bash
-kindle-export login
+book-export login
 ```
 
 **You never give this tool your Amazon password.** If the stored session
@@ -266,25 +266,25 @@ Reports welcome.
 ### Usage
 
 ```
-kindle-export serve                  open the web app in your browser
-kindle-export                        pick books from your library, then export
-kindle-export <ASIN...>              capture, transcribe and export
-kindle-export login                  sign in once, storing the session
-kindle-export list                   list the books in your Kindle library
-kindle-export capture <ASIN...>      capture page images only
-kindle-export ocr <ASIN...>          transcribe captured pages only
-kindle-export export <ASIN...>       render markdown from transcribed text only
+book-export serve                    open the web app in your browser
+book-export                          pick books from your library, then export
+book-export <ASIN...>                capture, transcribe and export
+book-export login                    sign in once, storing the session
+book-export list                     list the books in your Kindle library
+book-export capture <ASIN...>        capture page images only
+book-export ocr <ASIN...>            transcribe captured pages only
+book-export export <ASIN...>         render markdown from transcribed text only
 ```
 
 Useful options: `--format md,pdf`, `--json` and `--limit` for `list`,
 `--port` for `serve`, plus `--out-dir`, `--profile-dir`, `--model`,
-`--concurrency` and `--force`. Run `kindle-export --help` for the
+`--concurrency` and `--force`. Run `book-export --help` for the
 full list.
 
 `--model <name>` (or `OCR_MODEL` in the environment or `.env`) switches
 transcription from local OCR to an OpenAI model, which needs an API key. It is
 deliberately a per-run choice rather than a stored setting, so a Mac never
-starts paying for what it can read for free; `kindle-export serve --model ...`
+starts paying for what it can read for free; `book-export serve --model ...`
 applies it to the web app too. Leave it unset on macOS.
 
 `list` reads the same internal JSON endpoint the Kindle library page uses, so
@@ -294,7 +294,7 @@ The ASIN is also in the Amazon URL for a book — `.../dp/B01H4G2J1U`.
 
 ### The web app
 
-`kindle-export serve` opens a local page in your browser — made so that
+`book-export serve` opens a local page in your browser — made so that
 someone who never touches a terminal can use this after a one-time install.
 There are no steps to work through; the page is your Kindle library:
 

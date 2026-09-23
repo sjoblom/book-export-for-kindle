@@ -333,7 +333,7 @@ public final class AppModel {
       throw AppHTTPError(409, "An export is running — sign out once it has finished.")
     }
     if busy != nil {
-      throw AppHTTPError(409, "Kindle Export is busy with Amazon — try again in a moment")
+      throw AppHTTPError(409, "Book Export for Kindle is busy with Amazon — try again in a moment")
     }
 
     busy = .login
@@ -360,7 +360,7 @@ public final class AppModel {
       throw AppHTTPError(409, "an export is running — wait for it to finish")
     }
     if busy != nil {
-      throw AppHTTPError(409, "Kindle Export is busy with Amazon — try again in a moment")
+      throw AppHTTPError(409, "Book Export for Kindle is busy with Amazon — try again in a moment")
     }
     runLogin()
   }

@@ -162,7 +162,7 @@ final class ReaderHostingTests: XCTestCase {
     XCTAssertEqual(view.titleLabel.stringValue, "Sign in to Amazon to see your books")
     XCTAssertEqual(
       view.detailLabel.stringValue,
-      "This is Amazon’s own page — Kindle Export never sees your password.")
+      "This is Amazon’s own page — Book Export for Kindle never sees your password.")
     XCTAssertEqual(view.cancelButton.title, "Cancel")
     var cancelled = false
     view.onCancel = { cancelled = true }

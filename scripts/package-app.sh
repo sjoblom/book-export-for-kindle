@@ -1,5 +1,5 @@
 #!/bin/bash
-# Build "Kindle Export.app" — the native Mac app (macos/, see macos/PLAN.md).
+# Build "Book Export for Kindle.app" — the native Mac app (macos/, see macos/PLAN.md).
 #
 #   pnpm package                 # for this Mac's architecture
 #   ARCH=universal pnpm package  # arm64 + x86_64 in one binary
@@ -7,7 +7,7 @@
 # Node is needed here, at build time only: it bundles the shared TypeScript
 # logic into kindle-core.js (run by JavaScriptCore inside the app) and renders
 # the UI page into app.html. What ships is two Swift binaries — the app and
-# its command-line tool, `kindle-export` — plus those two files and an icon:
+# its command-line tool, `book-export` — plus those two files and an icon:
 # no Node, no node_modules, no Chrome, no OCR worker (Vision is called
 # directly).
 #
@@ -23,9 +23,9 @@
 set -euo pipefail
 
 ARCH="${ARCH:-$(uname -m)}"
-APP_NAME="Kindle Export"
+APP_NAME="Book Export for Kindle"
 PRODUCT="KindleExport"
-CLI_PRODUCT="kindle-export"
+CLI_PRODUCT="book-export"
 DIST="dist-app"
 APP="$DIST/$APP_NAME.app"
 CONTENTS="$APP/Contents"
@@ -46,7 +46,7 @@ esac
 
 say() { printf '\033[1m==>\033[0m %s\n' "$1"; }
 
-# `kindle-export --version` outside a bundle prints a compiled-in version;
+# `book-export --version` outside a bundle prints a compiled-in version;
 # inside one it prints Info.plist's, written below from package.json. Both
 # must say the same thing.
 VERSION="$(node -p 'require("./package.json").version')"
@@ -80,7 +80,7 @@ rm -rf "$DIST"
 mkdir -p "$CONTENTS/MacOS" "$RES"
 
 # The binary is renamed to the bundle's display name so Activity Monitor and
-# the Force Quit list show "Kindle Export", not the SwiftPM product name.
+# the Force Quit list show "Book Export for Kindle", not the SwiftPM product name.
 cp "$BINARY" "$CONTENTS/MacOS/$APP_NAME"
 cp "$CLI_BINARY" "$CONTENTS/MacOS/$CLI_PRODUCT"
 cp dist-core/kindle-core.js dist-core/app.html "$RES/"
@@ -129,7 +129,7 @@ CLI="$CONTENTS/MacOS/$CLI_PRODUCT"
 [ -x "$EXE" ] || fail "the executable is missing"
 [ -x "$CLI" ] || fail "the command-line tool is missing"
 echo "  executable      $(lipo -archs "$EXE")"
-echo "  kindle-export   $(lipo -archs "$CLI")"
+echo "  book-export     $(lipo -archs "$CLI")"
 for file in kindle-core.js app.html; do
   [ -s "$RES/$file" ] || fail "Resources/$file is missing"
 done
@@ -147,18 +147,18 @@ $FOREIGN"
 echo "  links           system frameworks only"
 
 # The tool answers without a window, from inside the bundle and through a
-# link, as `kindle-export` on the PATH runs it. Its version must be the app's.
-[ "$("$CLI" --version)" = "$VERSION" ] || fail "kindle-export --version is not $VERSION"
-"$CLI" --help | grep -q '^Usage' || fail "kindle-export --help printed no usage"
+# link, as `book-export` on the PATH runs it. Its version must be the app's.
+[ "$("$CLI" --version)" = "$VERSION" ] || fail "book-export --version is not $VERSION"
+"$CLI" --help | grep -q '^Usage' || fail "book-export --help printed no usage"
 LINK_DIR="$(mktemp -d)"
-ln -s "$PWD/$CLI" "$LINK_DIR/kindle-export"
+ln -s "$PWD/$CLI" "$LINK_DIR/book-export"
 # Through the link it must still run as the app (it re-executes itself from
 # the real path), or it would get a signed-out session of its own.
-KINDLE_EXPORT_DEBUG=1 "$LINK_DIR/kindle-export" --version 2>&1 >/dev/null \
+KINDLE_EXPORT_DEBUG=1 "$LINK_DIR/book-export" --version 2>&1 >/dev/null \
   | grep -q 'bundle com.kindle-export.app' \
-  || fail "kindle-export through a symlink does not run as the app's bundle"
+  || fail "book-export through a symlink does not run as the app's bundle"
 rm -rf "$LINK_DIR"
-echo "  kindle-export   --version $VERSION, --help ok, runs as the app through a link"
+echo "  book-export     --version $VERSION, --help ok, runs as the app through a link"
 
 # Leftovers from the Node-based app must never creep back in.
 LEFTOVER="$(find "$APP" \( -name node -o -name node_modules -o -name 'kindle-ocr-macos' \) -print)"
@@ -176,6 +176,6 @@ echo
 echo "Nothing else to install. Books are written to"
 echo "  ~/Documents/Kindle Export"
 echo
-echo "For Terminal: Kindle Export › Install Command-Line Tool… adds kindle-export."
+echo "For Terminal: Book Export for Kindle › Install Command-Line Tool… adds book-export."
 echo "Or run it straight from the bundle:"
 echo "  \"$CLI\" --help"

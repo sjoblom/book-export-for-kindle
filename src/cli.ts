@@ -33,19 +33,19 @@ export { applyConfig, type Options } from './pipeline'
 
 const VERSION = '0.3.0'
 
-const HELP = `kindle-export — export Kindle books you own as markdown
+const HELP = `book-export — export Kindle books you own as markdown
 
 Usage
-  kindle-export setup                  choose where books go, then sign in
-  kindle-export serve                  open the web app in your browser
-  kindle-export                        pick books from your library, then export
-  kindle-export <ASIN...>              capture, transcribe and export (resumes)
-  kindle-export login                  sign in to Amazon once, storing the session
-  kindle-export list                   list the books in your Kindle library
-  kindle-export clean [ASIN...]        delete working files, keeping the text
-  kindle-export capture <ASIN...>      capture page images only
-  kindle-export ocr <ASIN...>          transcribe captured pages only
-  kindle-export export <ASIN...>       render markdown from transcribed text only
+  book-export setup                    choose where books go, then sign in
+  book-export serve                    open the web app in your browser
+  book-export                          pick books from your library, then export
+  book-export <ASIN...>                capture, transcribe and export (resumes)
+  book-export login                    sign in to Amazon once, storing the session
+  book-export list                     list the books in your Kindle library
+  book-export clean [ASIN...]          delete working files, keeping the text
+  book-export capture <ASIN...>        capture page images only
+  book-export ocr <ASIN...>            transcribe captured pages only
+  book-export export <ASIN...>         render markdown from transcribed text only
 
 Options
   --format <md|pdf>      output format(s), comma separated (default: md)
@@ -66,7 +66,7 @@ Options
   -h, --help             show this help
   -v, --version          show the version
 
-The web app ('kindle-export serve') does the same in a browser: it shows your
+The web app ('book-export serve') does the same in a browser: it shows your
 Kindle library, and clicking a book exports it, ready to download.
 
 On macOS, pages are read on this machine for free using Apple's Vision
@@ -75,8 +75,8 @@ with OpenAI instead is an explicit choice per run: pass --model (or set
 OCR_MODEL), which needs an API key. Elsewhere, OpenAI is the only way to read
 pages, so 'setup' asks for a key there.
 
-Run 'kindle-export login' to sign in to Amazon; the session stays on this
-machine. 'kindle-export setup' stores the output folder (and the key, where
+Run 'book-export login' to sign in to Amazon; the session stays on this
+machine. 'book-export setup' stores the output folder (and the key, where
 one is needed) in ~/.kindle-export/config.json. Settings can also come from
 flags or a .env file, which take precedence.
 
@@ -84,13 +84,13 @@ Page images are deleted once a book is fully transcribed, since re-capturing
 costs time rather than data. Pass --keep-pages to hold on to them.
 
 Examples
-  kindle-export setup
-  kindle-export serve
-  kindle-export                        pick from a menu of your books
-  kindle-export list --json
-  kindle-export B01H4G2J1U
-  kindle-export B01H4G2J1U B07PPW5V9C --force-ocr
-  kindle-export ocr B01H4G2J1U --model gpt-5-mini`
+  book-export setup
+  book-export serve
+  book-export                          pick from a menu of your books
+  book-export list --json
+  book-export B01H4G2J1U
+  book-export B01H4G2J1U B07PPW5V9C --force-ocr
+  book-export ocr B01H4G2J1U --model gpt-5-mini`
 
 const COMMANDS = new Set([
   'setup',
@@ -303,7 +303,7 @@ export async function setup(): Promise<void> {
   const stored = await loadConfig()
   const localOcr = await isVisionOcrAvailable()
 
-  console.log('Settings are stored in your home directory, so kindle-export')
+  console.log('Settings are stored in your home directory, so book-export')
   console.log('works from any folder. Press enter to keep a current value.\n')
 
   let openaiApiKey = stored.openaiApiKey
@@ -434,12 +434,12 @@ async function login(options: Options): Promise<void> {
   const confirmed = await interactiveLogin(options.profileDir)
 
   if (confirmed) {
-    console.log('Session saved. You can now run: kindle-export')
+    console.log('Session saved. You can now run: book-export')
   } else {
     console.log(
       'Could not confirm the sign-in (the window was closed, or it timed out).'
     )
-    console.log("If you did sign in, you're fine — try: kindle-export list")
+    console.log("If you did sign in, you're fine — try: book-export list")
   }
 }
 
@@ -500,7 +500,7 @@ async function selectFromLibrary(options: Options): Promise<string[]> {
 
   if (!process.stdin.isTTY) {
     console.error(
-      'No ASINs given and no terminal to prompt on. Pass ASINs directly, or run: kindle-export list'
+      'No ASINs given and no terminal to prompt on. Pass ASINs directly, or run: book-export list'
     )
     process.exitCode = 1
     return []
@@ -546,8 +546,8 @@ async function main() {
     options = parseArgs(process.argv.slice(2))
   } catch (err) {
     // Usage errors deserve a one-line message, not a stack trace.
-    console.error(`kindle-export: ${(err as Error)?.message ?? err}`)
-    console.error("Run 'kindle-export --help' for usage.")
+    console.error(`book-export: ${(err as Error)?.message ?? err}`)
+    console.error("Run 'book-export --help' for usage.")
     process.exitCode = 1
     return
   }
@@ -635,7 +635,7 @@ async function main() {
  *
  * npm installs `bin` entries as symlinks, so the launched path and this
  * module's own path are different files on disk until both are resolved —
- * compare them raw and a globally installed `kindle-export` does nothing at
+ * compare them raw and a globally installed `book-export` does nothing at
  * all. Anything unresolvable falls through to running: a CLI that runs when it
  * shouldn't is a test artefact, one that silently exits is a broken install.
  */
@@ -659,7 +659,7 @@ if (isDirectEntryPoint()) {
     // instead of printing a stack trace; everything else keeps its stack.
     if (!isProfileBusyError(err)) throw err
 
-    console.error(`kindle-export: ${err.message}`)
+    console.error(`book-export: ${err.message}`)
     process.exitCode = 1
   }
 }

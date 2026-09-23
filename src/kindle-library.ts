@@ -27,7 +27,7 @@ const MAX_PAGES = 40
 
 export class NotSignedInError extends Error {
   constructor() {
-    super("not signed in to Amazon — run 'kindle-export login' first")
+    super("not signed in to Amazon — run 'book-export login' first")
     this.name = 'NotSignedInError'
   }
 }

@@ -14,7 +14,7 @@ import Foundation
 /// - release: the same unlink-then-rmdir on our own file.
 ///
 /// An owner is stale when its pid is dead, or alive but running something
-/// that is plainly not kindle-export (pids get recycled). Anything we can't
+/// that is plainly not book-export (pids get recycled). Anything we can't
 /// tell apart is treated as live: refusing is recoverable, two writers aren't.
 public enum BookLock {
   public static let directoryName = ".lock"
@@ -65,8 +65,8 @@ public enum BookLock {
   }
 
   /// book-lock.ts `ownerLooksLive`, the same pattern: every program that
-  /// takes this lock — Node, the app (`Kindle Export`, or `KindleExport`
-  /// outside a bundle), the native `kindle-export` tool (from inside the
+  /// takes this lock — Node, the app (`Book Export for Kindle`, or `KindleExport`
+  /// outside a bundle), the native `book-export` tool (from inside the
   /// bundle, its PATH link or `.build/`) and the `kexport` developer tool it
   /// replaced, which older checkouts may still run. A live owner that
   /// matches none of them is a recycled pid, so leaving one out would let its
@@ -74,7 +74,7 @@ public enum BookLock {
   public static func ownerLooksLive(_ commandLine: String?) -> Bool {
     guard let commandLine else { return true }
     return commandLine.range(
-      of: #"\b(node|kindle-export|tsx|Kindle Export|KindleExport|kexport)\b"#,
+      of: #"\b(node|kindle-export|book-export|tsx|Kindle Export|Book Export for Kindle|KindleExport|kexport)\b"#,
       options: [.regularExpression, .caseInsensitive]) != nil
   }
 
@@ -163,7 +163,7 @@ public enum BookLock {
     throw BookBusyError(pid: lastSeen?.pid ?? 0, bookDir: bookDir, command: lastSeen?.command)
   }
 
-  /// Throw if `owner` is a live kindle-export run; return if it is stale.
+  /// Throw if `owner` is a live book-export run; return if it is stale.
   private static func judge(_ owner: Owner?, bookDir: URL, probes: Probes) throws {
     guard let owner else { return }
     if probes.isAlive(owner.pid), ownerLooksLive(probes.commandLine(owner.pid)) {
@@ -284,7 +284,7 @@ public struct BookBusyError: LocalizedError, Equatable {
   public let command: String?
 
   public var errorDescription: String? {
-    "another kindle-export\(command.map { " (\($0))" } ?? "") is working on "
+    "another book-export\(command.map { " (\($0))" } ?? "") is working on "
       + "this book\(pid != 0 ? " (pid \(pid))" : ""); wait for it to finish and try again"
   }
 }

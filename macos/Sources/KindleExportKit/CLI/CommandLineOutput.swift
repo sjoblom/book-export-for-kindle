@@ -1,6 +1,6 @@
 import Foundation
 
-/// What the `kindle-export` command prints, kept apart from the printing so
+/// What the `book-export` command prints, kept apart from the printing so
 /// it is tested as plain values.
 public enum CommandLineOutput {
   /// One line on stdout or stderr.

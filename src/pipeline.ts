@@ -351,7 +351,7 @@ async function ocr(
   // they're dead weight, and re-capturing costs time rather than data. The
   // check is coverage, not "this run had no failures": a page skipped for any
   // other reason leaves text that can never be filled in once its image is
-  // gone. `kindle-export clean` asks the same question the same way.
+  // gone. `book-export clean` asks the same question the same way.
   const covered = !bookCompleteness({
     metadata,
     content: { captureId: metadata.captureId, chunks: content }
@@ -415,7 +415,7 @@ async function processBookLocked(
   }
   assert(
     metadata?.pages?.length,
-    `no captured pages — run 'kindle-export capture ${asin}' first`
+    `no captured pages — run 'book-export capture ${asin}' first`
   )
 
   let failedPages: FailedPage[] = []
@@ -469,7 +469,7 @@ async function processBookLocked(
   }
   assert(
     content?.length,
-    `no transcribed text — run 'kindle-export ocr ${asin}' first`
+    `no transcribed text — run 'book-export ocr ${asin}' first`
   )
 
   if (options.command === 'ocr') {

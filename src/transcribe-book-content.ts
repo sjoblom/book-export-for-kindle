@@ -202,7 +202,7 @@ export async function transcribeBook({
     assert(
       !missing,
       `page images for ${asin} are gone (cleaned up after transcription). ` +
-        `Run 'kindle-export capture ${asin} --force-capture' to fetch them again.`
+        `Run 'book-export capture ${asin} --force-capture' to fetch them again.`
     )
   }
 

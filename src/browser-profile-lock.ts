@@ -16,7 +16,7 @@ const execFileAsync = promisify(execFile)
  * writing to.
  *
  * The old behaviour was worse than guessing: it killed whatever pid the lock
- * named. Running `kindle-export list` while the web app was capturing a book
+ * named. Running `book-export list` while the web app was capturing a book
  * killed the capture, and a stale lock whose pid had been recycled killed an
  * unrelated process. Nothing here kills anything.
  */
@@ -37,7 +37,7 @@ export class ProfileBusyError extends Error {
 
   constructor(pid: number, profileDir: string) {
     super(
-      `another kindle-export browser is using this profile (pid ${pid}); ` +
+      `another book-export browser is using this profile (pid ${pid}); ` +
         'wait for it to finish, or close that browser window and try again'
     )
     this.name = 'ProfileBusyError'

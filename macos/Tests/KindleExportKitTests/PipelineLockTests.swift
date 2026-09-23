@@ -158,7 +158,7 @@ final class PipelineLockTests: XCTestCase {
   /// (and Node, which shares the pattern) out, judged by the real probes.
   func testBusyWhenALiveKexportHoldsIt() throws {
     let bookDir = try PipelineFixtures.tempDir("lock")
-    // Installed away from the repo, so no "kindle-export" in its path can
+    // Installed away from the repo, so no "book-export" in its path can
     // match for it.
     let pid = try spawn("/bin/sleep", argv0: "/opt/tools/kexport", ["30"])
     defer { stop(pid) }
@@ -249,6 +249,10 @@ final class PipelineLockTests: XCTestCase {
       BookLock.ownerLooksLive("/Applications/Kindle Export.app/Contents/MacOS/kindle-export B00X"))
     XCTAssertTrue(BookLock.ownerLooksLive("/usr/local/bin/kindle-export list"))
     XCTAssertTrue(BookLock.ownerLooksLive(".build/release/kindle-export B00X"))
+    // The same tools under their current names.
+    XCTAssertTrue(BookLock.ownerLooksLive("/usr/local/bin/book-export list"))
+    XCTAssertTrue(
+      BookLock.ownerLooksLive("/Applications/Book Export for Kindle.app/Contents/MacOS/Book Export for Kindle"))
     XCTAssertFalse(BookLock.ownerLooksLive("/usr/bin/vim"))
   }
 }

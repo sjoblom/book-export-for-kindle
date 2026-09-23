@@ -1,9 +1,9 @@
 import Foundation
 
-/// Putting the bundled `kindle-export` on the PATH: the app menu's "Install
+/// Putting the bundled `book-export` on the PATH: the app menu's "Install
 /// Command-Line Tool…" and "Uninstall Command-Line Tool…".
 ///
-/// The tool is a symlink to `Kindle Export.app/Contents/MacOS/kindle-export`,
+/// The tool is a symlink to `Book Export for Kindle.app/Contents/MacOS/book-export`,
 /// not a copy: the tool must run from inside the app to share its Amazon
 /// sign-in (see KindleExportCLI/main.swift), and a link follows the app
 /// through updates. The app never asks for an administrator password — where
@@ -58,7 +58,7 @@ public enum CommandLineTool {
     return .foreign(destination: resolved)
   }
 
-  /// `…/Something.app/Contents/MacOS/kindle-export`.
+  /// `…/Something.app/Contents/MacOS/book-export`.
   static func isAppTool(_ path: String) -> Bool {
     let url = URL(fileURLWithPath: path)
     let macOS = url.deletingLastPathComponent()
@@ -93,7 +93,7 @@ public enum CommandLineTool {
       return .needsAdmin(command: "")
     }
 
-    // A foreign kindle-export (most likely the Node tool's) first on the
+    // A foreign book-export (most likely the Node tool's) first on the
     // PATH would shadow a link placed anywhere later, so installing past it
     // would look like success and change nothing.
     let preferredLink = linkURL(in: preferred)

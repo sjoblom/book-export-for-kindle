@@ -102,7 +102,7 @@ describe('withBookLock', () => {
     expect(await lockExists()).toBe(false)
   })
 
-  it('refuses while a live kindle-export owns the book', async () => {
+  it('refuses while a live book-export owns the book', async () => {
     await plantLock(4242, 'capture')
 
     const attempt = withBookLock(bookDir, async () => 'ran', {
@@ -154,7 +154,7 @@ describe('withBookLock', () => {
   })
 
   it('takes over a lock whose pid now belongs to something else', async () => {
-    // Pids get recycled; a text editor holding 4242 is not a kindle-export run.
+    // Pids get recycled; a text editor holding 4242 is not a book-export run.
     await plantLock(4242)
 
     expect(await takeOverStale(async () => 'ran')).toBe('ran')
@@ -430,7 +430,7 @@ async function plantSwiftLock(pid: number, command: string) {
 describe('locks taken by the native app and kexport', () => {
   it('treats a live kexport capture as the owner, with the real probes', async () => {
     // A real process whose command line reads as the kexport binary, as `ps`
-    // sees it. Installed away from the repo, so no "kindle-export" in the path
+    // sees it. Installed away from the repo, so no "book-export" in the path
     // can match for it.
     const child = spawn('/bin/sleep', ['30'], {
       argv0: '/opt/tools/kexport',
@@ -459,14 +459,14 @@ describe('locks taken by the native app and kexport', () => {
   })
 
   it('treats a live native command-line tool as the owner', async () => {
-    await plantSwiftLock(process.pid, 'kindle-export all')
+    await plantSwiftLock(process.pid, 'book-export all')
     const thrown = await withBookLock(bookDir, async () => 'entered', {
       commandLine: async () =>
         '/Applications/Kindle Export.app/Contents/MacOS/kindle-export B00X'
     }).catch((err: unknown) => err)
 
     expect(isBookBusyError(thrown)).toBe(true)
-    expect(String(thrown)).toContain('(kindle-export all)')
+    expect(String(thrown)).toContain('(book-export all)')
   })
 
   it('treats a live native app as the owner', async () => {
@@ -505,6 +505,13 @@ describe('ownerLooksLive', () => {
     ).toBe(true)
     expect(ownerLooksLive('/usr/local/bin/kindle-export list')).toBe(true)
     expect(ownerLooksLive('macos/.build/release/kindle-export B00X')).toBe(true)
+    // The same tools under their current names.
+    expect(ownerLooksLive('/usr/local/bin/book-export list')).toBe(true)
+    expect(
+      ownerLooksLive(
+        '/Applications/Book Export for Kindle.app/Contents/MacOS/Book Export for Kindle'
+      )
+    ).toBe(true)
   })
 
   it('treats an unreadable command line as live', () => {

@@ -5,11 +5,11 @@ import path from 'node:path'
 import { isProcessAlive, readProcessCommandLine } from './browser-profile-lock'
 
 /**
- * One kindle-export run per book at a time.
+ * One book-export run per book at a time.
  *
  * The CLI and the web app share one output tree, and each of them is happy to
  * run while the other does. The browser profile lock stops two captures, but
- * nothing stopped `kindle-export ocr X` from reading a metadata.json the web
+ * nothing stopped `book-export ocr X` from reading a metadata.json the web
  * app was still appending pages to, transcribing half a book, and having the
  * result deleted when that capture finished — or `clean` from deleting the
  * page images a transcription was reading. A lock in the book directory makes
@@ -73,7 +73,7 @@ export class BookBusyError extends Error {
 
   constructor(pid: number, bookDir: string, command?: string) {
     super(
-      `another kindle-export${command ? ` (${command})` : ''} is working on ` +
+      `another book-export${command ? ` (${command})` : ''} is working on ` +
         `this book${pid ? ` (pid ${pid})` : ''}; wait for it to finish and try again`
     )
     this.name = 'BookBusyError'
@@ -111,7 +111,7 @@ type Probes = Required<Pick<BookLockOptions, 'isAlive' | 'commandLine'>>
  *
  * Every run of this tool is a Node process, the native app (`Kindle
  * Export.app`, or `KindleExport` when run unbundled), the native command-line
- * tool (`kindle-export`, run from inside the app bundle or `.build/`) or the
+ * tool (`book-export`, run from inside the app bundle or `.build/`) or the
  * `kexport` developer tool it replaced (older checkouts may still run it),
  * which all share this lock, so a live pid running something else is a
  * recycled pid. An unreadable command line stays "ours": there is a
@@ -121,7 +121,7 @@ type Probes = Required<Pick<BookLockOptions, 'isAlive' | 'commandLine'>>
 export function ownerLooksLive(commandLine: string | undefined): boolean {
   if (commandLine === undefined) return true
 
-  return /\b(node|kindle-export|tsx|Kindle Export|KindleExport|kexport)\b/i.test(
+  return /\b(node|kindle-export|book-export|tsx|Kindle Export|Book Export for Kindle|KindleExport|kexport)\b/i.test(
     commandLine
   )
 }
@@ -225,7 +225,7 @@ async function acquire(
   throw new BookBusyError(lastSeen?.pid ?? 0, bookDir, lastSeen?.command)
 }
 
-/** Throw if `owner` is a live kindle-export run; return if it is stale. */
+/** Throw if `owner` is a live book-export run; return if it is stale. */
 async function judge(
   owner: BookLockOwner | undefined,
   bookDir: string,

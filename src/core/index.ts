@@ -40,7 +40,7 @@ import {
 import { selectReusableChunks } from '../reusable-chunks'
 
 /**
- * The pure half of kindle-export, for the native macOS app.
+ * The pure half of book-export, for the native macOS app.
  *
  * Bundled by `pnpm build:core` into `dist-core/kindle-core.js`, which the app
  * runs in JavaScriptCore so that it captures, transcribes and exports by the

@@ -6,7 +6,7 @@ import KindleExportKit
 /// the way a click would, then write what happened and quit.
 ///
 ///     KINDLE_EXPORT_AUTOTEST=<ASIN> [KINDLE_EXPORT_OUT_DIR=<dir>] \
-///       "Kindle Export.app/Contents/MacOS/Kindle Export"
+///       "Book Export for Kindle.app/Contents/MacOS/Book Export for Kindle"
 ///
 /// Waits for the launch-time library read, enqueues the ASIN through the same
 /// route the page uses (`POST /api/export`), waits for the queue to finish and
@@ -165,6 +165,6 @@ enum Autotest {
   }
 
   static func log(_ line: String) {
-    FileHandle.standardError.write(Data("[kindle-export] \(line)\n".utf8))
+    FileHandle.standardError.write(Data("[book-export] \(line)\n".utf8))
   }
 }

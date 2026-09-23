@@ -119,7 +119,7 @@ public actor BookPipeline {
   private let makeCore: @Sendable () throws -> PipelineCore
   private let lockProbes: BookLock.Probes
   /// Who holds the book lock, as the next run's "busy" message names it
-  /// ("app all", "kindle-export capture").
+  /// ("app all", "book-export capture").
   private let ownerName: String
   private var core: PipelineCore?
 

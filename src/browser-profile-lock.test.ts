@@ -138,7 +138,7 @@ describe('inspectProfileLock', () => {
   })
 
   it('reports a live browser on this profile as busy', async () => {
-    // The bug this fixes: `kindle-export list` used to kill this process,
+    // The bug this fixes: `book-export list` used to kill this process,
     // taking the web app's in-progress capture with it.
     await expect(inspect({ commandLine: CHROME })).resolves.toEqual({
       state: 'busy',

@@ -65,7 +65,7 @@ describe('describeIncompleteCapture', () => {
     const lines = describeIncompleteCapture(book(), 'B01H4G2J1U')
 
     expect(lines![1]).toContain('capture it again')
-    expect(lines![1]).toContain('kindle-export B01H4G2J1U --force-capture')
+    expect(lines![1]).toContain('book-export B01H4G2J1U --force-capture')
   })
 
   it('falls back to the raw reason it does not recognise', () => {
@@ -154,7 +154,7 @@ describe('bookCompleteness', () => {
       'Stopped at page 2 of 10 — capture it again to get the rest.'
     )
     expect(completeness.warnings.join(' ')).toContain(
-      'kindle-export B00TEST --force-capture'
+      'book-export B00TEST --force-capture'
     )
   })
 
@@ -179,7 +179,7 @@ describe('bookCompleteness', () => {
       { index: 4, page: 5 }
     ])
     expect(completeness.summary).toContain('2 of 5 pages could not be read')
-    expect(completeness.warnings.join(' ')).toContain('kindle-export B00TEST')
+    expect(completeness.warnings.join(' ')).toContain('book-export B00TEST')
   })
 
   it('treats text from a previous capture as no text at all', () => {

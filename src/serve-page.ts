@@ -21,7 +21,7 @@ export type PageTransport = 'http' | 'bridge'
 export interface RenderPageOptions {
   /**
    * How the page talks to its backend. `http` (the default) is
-   * `kindle-export serve`: fetch + server-sent events against the local
+   * `book-export serve`: fetch + server-sent events against the local
    * server. `bridge` is the native Mac app, where the page is loaded from a
    * file and every call goes through a WKScriptMessageHandler instead — see
    * macos/PLAN.md, "Page ↔ Swift bridge". The API vocabulary (routes, bodies,
@@ -51,7 +51,7 @@ export function renderPage(options: RenderPageOptions = {}): string {
  * EventSource at all and the browser page no bridge hooks.
  */
 
-const HTTP_TRANSPORT = `// Where Amazon runs: kindle-export serve drives a separate Chrome window,
+const HTTP_TRANSPORT = `// Where Amazon runs: book-export serve drives a separate Chrome window,
 // which the person signs in in while this page waits.
 var READER = {
   signingInStatus: 'Waiting for you to sign in to Amazon…',
@@ -83,7 +83,7 @@ function request(method, path, body) {
       return data
     })
   }, function () {
-    throw new Error('Kindle Export is not responding. Is it still running?')
+    throw new Error('Book Export for Kindle is not responding. Is it still running?')
   })
 }
 
@@ -146,13 +146,13 @@ function request(method, path, body) {
   return new Promise(function (resolve, reject) {
     var handler = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.kindle
     if (!handler) {
-      reject(new Error('This page only works inside the Kindle Export app.'))
+      reject(new Error('This page only works inside the Book Export for Kindle app.'))
       return
     }
     var id = String(nextRequestId++)
     var timer = setTimeout(function () {
       delete pending[id]
-      reject(new Error('Kindle Export did not answer. Please try again.'))
+      reject(new Error('Book Export for Kindle did not answer. Please try again.'))
     }, BRIDGE_TIMEOUT_MS)
     pending[id] = { resolve: resolve, reject: reject, timer: timer }
     var message = { id: id, method: method, path: path }
@@ -162,7 +162,7 @@ function request(method, path, body) {
     } catch (err) {
       clearTimeout(timer)
       delete pending[id]
-      reject(new Error('Kindle Export did not answer. Please try again.'))
+      reject(new Error('Book Export for Kindle did not answer. Please try again.'))
     }
   })
 }
@@ -222,7 +222,7 @@ const PAGE = `<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
-<title>Kindle Export</title>
+<title>Book Export for Kindle</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📖</text></svg>">
 <style>
 :root {
@@ -326,7 +326,7 @@ svg.icon { width: 16px; height: 16px; flex: none; fill: none; stroke: currentCol
 }
 .brand-mark svg.icon { width: 17px; height: 17px; }
 .brand-text { min-width: 0; }
-.brand-name { font-weight: 600; font-size: 15px; letter-spacing: -0.01em; white-space: nowrap; }
+.brand-name { font-weight: 600; font-size: 15px; letter-spacing: -0.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .status { color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; align-items: center; gap: 6px; }
 .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--faint); flex: none; }
 .dot.good { background: var(--good); }
@@ -665,7 +665,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, summary:focus-visibl
     <div class="brand">
       <div class="brand-mark" aria-hidden="true"><svg class="icon" viewBox="0 0 24 24"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v15H6.5A2.5 2.5 0 0 0 4 20.5z"/><path d="M4 20.5A2.5 2.5 0 0 0 6.5 23H20v-5"/></svg></div>
       <div class="brand-text">
-        <div class="brand-name">Kindle Export</div>
+        <div class="brand-name">Book Export for Kindle</div>
         <div class="status" id="status" role="status" aria-live="polite"><span class="dot" id="status-dot"></span><span id="status-text">Starting…</span></div>
       </div>
     </div>
@@ -1212,8 +1212,8 @@ function renderNotices() {
   }
 
   if (state.profileBusy) {
-    holder.appendChild(notice('warn', 'clock', 'Chrome is busy with another Kindle Export',
-      'Another copy of Kindle Export is using the browser right now. Your library will load as soon as it’s done — it tries again by itself.',
+    holder.appendChild(notice('warn', 'clock', 'Chrome is busy with another Book Export for Kindle',
+      'Another copy of Book Export for Kindle is using the browser right now. Your library will load as soon as it’s done — it tries again by itself.',
       [el('button', { class: 'btn', type: 'button', text: 'Try now', onclick: refreshLibrary })]))
   } else if (state.libraryError) {
     holder.appendChild(notice('bad', 'alert', 'Could not load your library', state.libraryError,
@@ -1491,7 +1491,7 @@ function signIn() {
 }
 
 function signOut() {
-  if (!window.confirm('Sign out of Amazon?\\n\\nKindle Export forgets this Amazon account and its book list. Books you already exported stay where they are.')) return
+  if (!window.confirm('Sign out of Amazon?\\n\\nBook Export for Kindle forgets this Amazon account and its book list. Books you already exported stay where they are.')) return
   api('/api/signout').then(function () {
     toast('Signed out of Amazon.', 'good')
   }).catch(function (err) { toast(err.message) })

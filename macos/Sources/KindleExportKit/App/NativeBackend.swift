@@ -45,7 +45,7 @@ public final class NativeBackend: NSObject, AppBackend {
   public var allowsSignIn = true
   /// Diagnostics (stderr by default).
   public var log: (String) -> Void = { line in
-    FileHandle.standardError.write(Data("[kindle-export] \(line)\n".utf8))
+    FileHandle.standardError.write(Data("[book-export] \(line)\n".utf8))
   }
 
   /// Where the web view should be now. The app moves it (`ReaderSession

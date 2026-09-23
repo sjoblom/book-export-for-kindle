@@ -8,7 +8,7 @@ import AppKit
 public final class SignInView: NSView {
   public static let title = "Sign in to Amazon to see your books"
   public static let detail =
-    "This is Amazon’s own page — Kindle Export never sees your password."
+    "This is Amazon’s own page — Book Export for Kindle never sees your password."
   static let barHeight: CGFloat = 56
 
   /// Where the reader's web view goes.

@@ -2,7 +2,7 @@ import AppKit
 import Foundation
 import KindleExportKit
 
-/// One run of `kindle-export`: the command, its output, Ctrl-C, and — for
+/// One run of `book-export`: the command, its output, Ctrl-C, and — for
 /// the commands that use the reader — the windows.
 @MainActor
 final class Runner: NSObject, NSApplicationDelegate, NSWindowDelegate {
@@ -82,7 +82,7 @@ final class Runner: NSObject, NSApplicationDelegate, NSWindowDelegate {
   }
 
   /// This process has the app's bundle identity, so while it runs, opening
-  /// Kindle Export from Finder or the Dock finds *it* and merely reopens it —
+  /// Book Export for Kindle from Finder or the Dock finds *it* and merely reopens it —
   /// the app would never start. Start the real app instead.
   func applicationShouldHandleReopen(_: NSApplication, hasVisibleWindows _: Bool) -> Bool {
     guard Bundle.main.bundleIdentifier == CommandLineOptions.appBundleIdentifier else {
@@ -117,7 +117,7 @@ final class Runner: NSObject, NSApplicationDelegate, NSWindowDelegate {
   private func login() async -> Int32 {
     Terminal.print("Checking your Amazon sign-in...")
     if await backend.signIn() {
-      Terminal.print("Signed in to Amazon. Kindle Export.app shares this sign-in.")
+      Terminal.print("Signed in to Amazon. Book Export for Kindle.app shares this sign-in.")
       return 0
     }
     Terminal.error("Could not confirm the sign-in (the window was closed, or it timed out).")
@@ -129,7 +129,7 @@ final class Runner: NSObject, NSApplicationDelegate, NSWindowDelegate {
     do {
       books = try await library(limit: options.limit)
     } catch {
-      Terminal.error("kindle-export: \(libraryErrorMessage(error))")
+      Terminal.error("book-export: \(libraryErrorMessage(error))")
       return 1
     }
     if options.json {
@@ -150,7 +150,7 @@ final class Runner: NSObject, NSApplicationDelegate, NSWindowDelegate {
   private func pick() async -> Picked {
     guard Terminal.isInteractive else {
       Terminal.error(
-        "No ASINs given and no terminal to prompt on. Pass ASINs directly, or run: kindle-export list"
+        "No ASINs given and no terminal to prompt on. Pass ASINs directly, or run: book-export list"
       )
       return .exit(1)
     }
@@ -160,7 +160,7 @@ final class Runner: NSObject, NSApplicationDelegate, NSWindowDelegate {
     do {
       books = try await library(limit: nil)
     } catch {
-      Terminal.error("kindle-export: \(libraryErrorMessage(error))")
+      Terminal.error("book-export: \(libraryErrorMessage(error))")
       return .exit(1)
     }
     guard !books.isEmpty else {
@@ -281,7 +281,7 @@ final class Runner: NSObject, NSApplicationDelegate, NSWindowDelegate {
     do {
       core = try PipelineCore()
     } catch {
-      Terminal.error("kindle-export: \(Terminal.describe(error))")
+      Terminal.error("book-export: \(Terminal.describe(error))")
       return 1
     }
 
@@ -351,7 +351,7 @@ final class Runner: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
   private func libraryErrorMessage(_ error: Error) -> String {
     if case LibraryService.LibraryError.notSignedIn = error {
-      return "Not signed in to Amazon. Run: kindle-export login"
+      return "Not signed in to Amazon. Run: book-export login"
     }
     return Terminal.describe(error)
   }
@@ -369,7 +369,7 @@ final class Runner: NSObject, NSApplicationDelegate, NSWindowDelegate {
         contentRect: NSRect(origin: .zero, size: ReaderSession.viewportSize),
         styleMask: [.titled, .miniaturizable], backing: .buffered, defer: false)
       session = ReaderSession(window: window)
-      window.title = "Kindle Export — reader"
+      window.title = "Book Export for Kindle — reader"
     } else {
       // The app's invisible host window: renders, takes synthesized input,
       // shows nothing.
@@ -435,7 +435,7 @@ final class Runner: NSObject, NSApplicationDelegate, NSWindowDelegate {
     let window = NSWindow(
       contentRect: frame, styleMask: [.titled, .closable, .miniaturizable, .resizable],
       backing: .buffered, defer: false)
-    window.title = "Kindle Export — Sign in"
+    window.title = "Book Export for Kindle — Sign in"
     window.isReleasedWhenClosed = false
     window.minSize = NSSize(width: 520, height: 480)
     let view = SignInView(frame: frame)
@@ -461,7 +461,7 @@ final class Runner: NSObject, NSApplicationDelegate, NSWindowDelegate {
     main.addItem(appItem)
     let appMenu = NSMenu()
     appMenu.addItem(
-      withTitle: "Quit kindle-export", action: #selector(NSApplication.terminate(_:)),
+      withTitle: "Quit book-export", action: #selector(NSApplication.terminate(_:)),
       keyEquivalent: "q")
     appItem.submenu = appMenu
 

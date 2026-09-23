@@ -1,6 +1,6 @@
 import Foundation
 
-/// The native `kindle-export` command line (macos/Sources/KindleExportCLI):
+/// The native `book-export` command line (macos/Sources/KindleExportCLI):
 /// its arguments, help and version. Pure, so it is tested without a terminal;
 /// the executable only acts on what `parse` returns.
 ///
@@ -14,7 +14,7 @@ public enum CommandLineOptions {
   /// the app's Info.plist version instead (`resolvedVersion`), which the same
   /// script writes from package.json.
   public static let version = "0.3.0"
-  public static let programName = "kindle-export"
+  public static let programName = "book-export"
   /// The app's bundle identifier (scripts/package-app.sh).
   public static let appBundleIdentifier = "com.kindle-export.app"
 
@@ -76,14 +76,14 @@ public enum CommandLineOptions {
 
   /// Commands the Node tool has and this one deliberately does not.
   static let nodeOnlyCommands: [String: String] = [
-    "serve": "on a Mac, open Kindle Export.app instead",
-    "setup": "this tool needs no setup; sign in with 'kindle-export login'",
+    "serve": "on a Mac, open Book Export for Kindle.app instead",
+    "setup": "this tool needs no setup; sign in with 'book-export login'",
   ]
 
   static let nodeOnlyOptions: [String: String] = [
     "--model": "pages are read on this Mac with Apple Vision",
-    "--profile-dir": "the Amazon session is the Kindle Export app's",
-    "--port": "there is no web server; open Kindle Export.app instead",
+    "--profile-dir": "the Amazon session is the Book Export for Kindle app's",
+    "--port": "there is no web server; open Book Export for Kindle.app instead",
   ]
 
   public static func parse(_ argv: [String]) throws -> Parsed {
@@ -138,7 +138,7 @@ public enum CommandLineOptions {
         options.show = true
       default:
         if let why = nodeOnlyOptions[arg] {
-          throw UsageError("\(arg) is only in the Node version of kindle-export (\(why))")
+          throw UsageError("\(arg) is only in the Node version of book-export (\(why))")
         }
         if arg.hasPrefix("-") { throw UsageError("unknown option: \(arg)") }
         positional.append(arg)
@@ -151,7 +151,7 @@ public enum CommandLineOptions {
         options.command = command
         positional.removeFirst()
       } else if let why = nodeOnlyCommands[first] {
-        throw UsageError("'\(first)' is only in the Node version of kindle-export (\(why))")
+        throw UsageError("'\(first)' is only in the Node version of book-export (\(why))")
       }
     }
 
@@ -224,7 +224,7 @@ public enum CommandLineOptions {
     return URL(fileURLWithPath: expanded, isDirectory: true, relativeTo: cwd).standardizedFileURL
   }
 
-  /// The app's version when this tool runs from inside Kindle Export.app
+  /// The app's version when this tool runs from inside Book Export for Kindle.app
   /// (the two can't disagree), the compiled-in one otherwise.
   public static func resolvedVersion(bundle: Bundle = .main) -> String {
     if bundle.bundleIdentifier == appBundleIdentifier,
@@ -238,17 +238,17 @@ public enum CommandLineOptions {
   // MARK: - help
 
   public static let help = """
-    kindle-export — export Kindle books you own as markdown
+    book-export — export Kindle books you own as markdown
 
     Usage
-      kindle-export                        pick books from your library, then export
-      kindle-export <ASIN...>              capture, transcribe and export (resumes)
-      kindle-export login                  sign in to Amazon (in a window)
-      kindle-export list                   list the books in your Kindle library
-      kindle-export clean [ASIN...]        delete working files, keeping the text
-      kindle-export capture <ASIN...>      capture page images only
-      kindle-export ocr <ASIN...>          transcribe captured pages only
-      kindle-export export <ASIN...>       write markdown/PDF from transcribed text only
+      book-export                          pick books from your library, then export
+      book-export <ASIN...>                capture, transcribe and export (resumes)
+      book-export login                    sign in to Amazon (in a window)
+      book-export list                     list the books in your Kindle library
+      book-export clean [ASIN...]          delete working files, keeping the text
+      book-export capture <ASIN...>        capture page images only
+      book-export ocr <ASIN...>            transcribe captured pages only
+      book-export export <ASIN...>         write markdown/PDF from transcribed text only
 
     Options
       --format <md|pdf>      output format(s), comma separated (default: md)
@@ -266,7 +266,7 @@ public enum CommandLineOptions {
       -h, --help             show this help
       -v, --version          show the version
 
-    This is the command-line side of Kindle Export.app. It uses the app's
+    This is the command-line side of Book Export for Kindle.app. It uses the app's
     Amazon sign-in and the app's books folder, so a book started in one can be
     finished in the other. Pages are read on this Mac with Apple's Vision
     framework — free, offline, no API key.
@@ -279,10 +279,10 @@ public enum CommandLineOptions {
     them. Ctrl-C stops cleanly; running the same command again resumes.
 
     Examples
-      kindle-export                        pick from a list of your books
-      kindle-export list --json
-      kindle-export B01H4G2J1U
-      kindle-export B01H4G2J1U B07PPW5V9C --force-ocr
-      kindle-export export B01H4G2J1U --format md,pdf
+      book-export                          pick from a list of your books
+      book-export list --json
+      book-export B01H4G2J1U
+      book-export B01H4G2J1U B07PPW5V9C --force-ocr
+      book-export export B01H4G2J1U --format md,pdf
     """
 }

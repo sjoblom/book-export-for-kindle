@@ -127,9 +127,7 @@ describe('processBook', () => {
       remedy: 'capture-again'
     })
     expect(warnings.join('\n')).toContain('stopped at page 2 of 10')
-    expect(warnings.join('\n')).toContain(
-      `kindle-export ${ASIN} --force-capture`
-    )
+    expect(warnings.join('\n')).toContain(`book-export ${ASIN} --force-capture`)
     expect(bookFellShort(result, 'export')).toBe(true)
 
     // It still writes the book it has; the point is that it says what is

@@ -3,7 +3,7 @@ import XCTest
 
 @testable import KindleExportKit
 
-/// The native `kindle-export` command: parsing, help/version, output, and
+/// The native `book-export` command: parsing, help/version, output, and
 /// the app's install-a-link logic. The executable itself only wires these to
 /// the terminal and the reader.
 final class CommandLineOptionsTests: XCTestCase {
@@ -106,11 +106,11 @@ final class CommandLineOptionsTests: XCTestCase {
   func testNodeOnlyOptionsAndCommandsSayWhere() {
     XCTAssertEqual(
       usageError(["ocr", "B00X", "--model", "gpt-5-mini"]),
-      "--model is only in the Node version of kindle-export (pages are read on this Mac with Apple Vision)"
+      "--model is only in the Node version of book-export (pages are read on this Mac with Apple Vision)"
     )
     XCTAssertTrue(usageError(["--profile-dir", "x"])?.contains("Node version") == true)
-    XCTAssertTrue(usageError(["serve"])?.contains("open Kindle Export.app") == true)
-    XCTAssertTrue(usageError(["setup"])?.contains("kindle-export login") == true)
+    XCTAssertTrue(usageError(["serve"])?.contains("open Book Export for Kindle.app") == true)
+    XCTAssertTrue(usageError(["setup"])?.contains("book-export login") == true)
   }
 
   func testHelpAndVersionWin() throws {
@@ -122,9 +122,9 @@ final class CommandLineOptionsTests: XCTestCase {
 
   func testHelpCoversEveryCommandAndOption() {
     let help = CommandLineOptions.help
-    XCTAssertTrue(help.hasPrefix("kindle-export — export Kindle books"))
+    XCTAssertTrue(help.hasPrefix("book-export — export Kindle books"))
     for command in ["login", "list", "clean", "capture", "ocr", "export"] {
-      XCTAssertTrue(help.contains("kindle-export \(command)"), command)
+      XCTAssertTrue(help.contains("book-export \(command)"), command)
     }
     for flag in [
       "--format", "--json", "--limit", "--out-dir", "--concurrency", "--force ", "--force-capture",
@@ -285,7 +285,7 @@ final class CommandLineToolTests: XCTestCase {
   override func setUpWithError() throws {
     root = FileManager.default.temporaryDirectory
       .appendingPathComponent("cli-install-\(UUID().uuidString)", isDirectory: true)
-    let app = root.appendingPathComponent("Applications/Kindle Export.app")
+    let app = root.appendingPathComponent("Applications/Book Export for Kindle.app")
     target = CommandLineTool.bundledTool(appBundle: app)
     try FileManager.default.createDirectory(
       at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -309,15 +309,15 @@ final class CommandLineToolTests: XCTestCase {
 
   func testBundledToolPath() {
     XCTAssertEqual(
-      CommandLineTool.bundledTool(appBundle: URL(fileURLWithPath: "/Applications/Kindle Export.app"))
-        .path, "/Applications/Kindle Export.app/Contents/MacOS/kindle-export")
+      CommandLineTool.bundledTool(appBundle: URL(fileURLWithPath: "/Applications/Book Export for Kindle.app"))
+        .path, "/Applications/Book Export for Kindle.app/Contents/MacOS/book-export")
     XCTAssertEqual(
       CommandLineTool.standardDirectories(home: URL(fileURLWithPath: "/Users/x")).map(\.path),
       ["/usr/local/bin", "/Users/x/.local/bin"])
   }
 
   func testInstallsInTheFirstWritableDirectory() throws {
-    let link = usrLocalBin.appendingPathComponent("kindle-export")
+    let link = usrLocalBin.appendingPathComponent("book-export")
     XCTAssertEqual(
       CommandLineTool.install(target: target, directories: directories),
       .installed(link: link, fallback: false))
@@ -332,7 +332,7 @@ final class CommandLineToolTests: XCTestCase {
 
   func testFallsBackToLocalBinWhenUsrLocalBinNeedsRoot() throws {
     try readOnly(usrLocalBin)
-    let link = localBin.appendingPathComponent("kindle-export")
+    let link = localBin.appendingPathComponent("book-export")
     // ~/.local/bin is created when missing.
     XCTAssertEqual(
       CommandLineTool.install(target: target, directories: directories),
@@ -361,7 +361,7 @@ final class CommandLineToolTests: XCTestCase {
 
   func testNeverReplacesSomethingElse() throws {
     // The Node tool's npm link, say.
-    let link = usrLocalBin.appendingPathComponent("kindle-export")
+    let link = usrLocalBin.appendingPathComponent("book-export")
     try FileManager.default.createSymbolicLink(
       atPath: link.path, withDestinationPath: "../lib/node_modules/kindle-export/dist/cli.js")
     let result = CommandLineTool.install(target: target, directories: directories)
@@ -386,8 +386,8 @@ final class CommandLineToolTests: XCTestCase {
   func testReplacesALinkToAnotherCopyOfTheApp() throws {
     // The app was moved (or an older build installed it): the old link
     // points into a bundle that may not even exist any more.
-    let link = usrLocalBin.appendingPathComponent("kindle-export")
-    let old = "/Users/x/Downloads/Kindle Export.app/Contents/MacOS/kindle-export"
+    let link = usrLocalBin.appendingPathComponent("book-export")
+    let old = "/Users/x/Downloads/Book Export for Kindle.app/Contents/MacOS/book-export"
     try FileManager.default.createSymbolicLink(atPath: link.path, withDestinationPath: old)
     XCTAssertEqual(CommandLineTool.state(of: link, target: target), .otherApp(destination: old))
     XCTAssertEqual(
@@ -397,9 +397,9 @@ final class CommandLineToolTests: XCTestCase {
   }
 
   func testUninstallRemovesOnlyOurLinks() throws {
-    let ours = usrLocalBin.appendingPathComponent("kindle-export")
+    let ours = usrLocalBin.appendingPathComponent("book-export")
     try FileManager.default.createSymbolicLink(at: ours, withDestinationURL: target)
-    let theirs = localBin.appendingPathComponent("kindle-export")
+    let theirs = localBin.appendingPathComponent("book-export")
     try FileManager.default.createDirectory(at: localBin, withIntermediateDirectories: true)
     try FileManager.default.createSymbolicLink(atPath: theirs.path, withDestinationPath: "/opt/other")
 
@@ -414,7 +414,7 @@ final class CommandLineToolTests: XCTestCase {
   }
 
   func testUninstallNeedsAdminInARootOwnedFolder() throws {
-    let link = usrLocalBin.appendingPathComponent("kindle-export")
+    let link = usrLocalBin.appendingPathComponent("book-export")
     try FileManager.default.createSymbolicLink(at: link, withDestinationURL: target)
     try readOnly(usrLocalBin)
     XCTAssertEqual(
@@ -425,8 +425,8 @@ final class CommandLineToolTests: XCTestCase {
   func testShellQuoting() {
     XCTAssertEqual(CommandLineTool.shellQuote("/usr/local/bin"), "/usr/local/bin")
     XCTAssertEqual(
-      CommandLineTool.shellQuote("/Applications/Kindle Export.app"),
-      "'/Applications/Kindle Export.app'")
+      CommandLineTool.shellQuote("/Applications/Book Export for Kindle.app"),
+      "'/Applications/Book Export for Kindle.app'")
     XCTAssertEqual(CommandLineTool.shellQuote("it's"), #"'it'\''s'"#)
     XCTAssertEqual(CommandLineTool.shellQuote(""), "''")
   }
