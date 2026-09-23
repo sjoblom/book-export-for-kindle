@@ -85,3 +85,43 @@ result. Errors thrown in JS surface as Swift errors with the JS message.
 - App: serve.ts `App` (queue, states, library cache, auto sign-in once per
   launch) and serve-page.ts (the UI) talking over a WKScriptMessageHandler
   bridge instead of HTTP + SSE.
+
+## Wave 2 — the app shell
+
+### Page ↔ Swift bridge (replaces HTTP + SSE inside the app)
+
+The page (src/serve-page.ts) keeps one API vocabulary — the routes and JSON
+bodies of src/serve.ts — and gains a transport layer:
+
+- `kindle-export serve` (browser): `fetch('/api/…')` + `EventSource('/api/events')`
+  exactly as today.
+- In the app (`window.webkit?.messageHandlers?.kindle` present, or the page
+  was rendered with `transport: 'bridge'`):
+  - request: `window.webkit.messageHandlers.kindle.postMessage({ id, method, path, body })`
+    with the same `method`/`path`/`body` the HTTP call would use (e.g.
+    `{method:'POST', path:'/api/export', body:{asin}}`).
+  - reply: Swift calls `window.__kindleReply(id, status, json)` — `status` is
+    the HTTP status the server would have sent, `json` the same body (errors as
+    `{error}` with 4xx/5xx).
+  - state pushes: Swift calls `window.__kindleState(json)` with the same object
+    `/api/events` streams (the AppState of serve.ts), debounced ~150 ms.
+  - downloads: the page sends `{method:'GET', path:'/api/download/<asin>/<name>'}`
+    through the bridge instead of navigating; Swift saves the file to
+    ~/Downloads (unique name) and reveals it in Finder; reply `{saved: path}`.
+  - `POST /api/reveal` → Swift `NSWorkspace` reveal.
+- `renderPage({ transport })` — the app bundles the page rendered with
+  `transport: 'bridge'` as `app.html` (built by `pnpm build:app-page` into
+  `dist-core/app.html`).
+
+### Swift app responsibilities (port of src/serve.ts `App`)
+
+AppModel (@MainActor): the same state shape and behaviour as serve.ts —
+library from cache on launch, background refresh, one automatic sign-in per
+launch (showing the reader window), queue with remove/stop-after-current,
+per-book status from pipeline events, disk scan (BookStatus), alsoPdf setting
+(stored in ~/.kindle-export/config.json like the CLI), API key state is moot
+(no OpenAI in the app: `needsApiKey` always false, `localOcr` true).
+Windows: the main window hosts the UI page; a second "Amazon" window hosts the
+ReaderSession (hidden/minimized during capture and library refresh, shown for
+sign-in). Menus: Edit (copy/paste), View › Reload, Window, Show Books in
+Finder. Quit while exporting asks first. Books go to ~/Documents/Kindle Export.
