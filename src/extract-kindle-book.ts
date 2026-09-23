@@ -205,11 +205,16 @@ export async function launchBrowserContext(
         await context.addInitScript(() => {
           const origCreateObjectURL = URL.createObjectURL.bind(URL)
           URL.createObjectURL = function (blob: Blob) {
-            // TODO: filter for image/png blobs? since those are the only ones we're using
-            // (haven't found this to be an issue in practice)
             const type = blob.type || 'application/octet-stream'
             const url = origCreateObjectURL(blob)
             // nodeLog('createObjectURL', url, type, blob.size)
+
+            // Rendered pages are always images. Anything else (fonts, scripts,
+            // JSON) can never become the main image's `src`, so copying it into
+            // node would only cost CPU and memory for the whole capture.
+            if (!type.startsWith('image/')) {
+              return url
+            }
 
             // Snapshot blob bytes immediately because kindle's renderer revokes
             // them immediately after they're used.
@@ -431,9 +436,20 @@ export async function extractBook(
           if (metadata.asin !== asin) return
 
           delete metadata.cpr
-          if (Array.isArray(metadata.authorsList)) {
-            metadata.authorsList = normalizeAuthors(metadata.authorsList)
-          }
+
+          // Amazon sends authors as `"Last, First:Last2, First2:"`. Every reader
+          // of the stored metadata (the exporters, book-status) reads
+          // `authorList`, so that is the field to normalize; `authorsList` is
+          // accepted too in case Amazon ever spells it that way, but it is
+          // folded into `authorList` so the stored shape stays the one
+          // `AmazonBookMeta` declares.
+          const rawAuthors: unknown = Array.isArray(metadata.authorList)
+            ? metadata.authorList
+            : metadata.authorsList
+          delete metadata.authorsList
+          metadata.authorList = Array.isArray(rawAuthors)
+            ? normalizeAuthors(rawAuthors.map(String))
+            : []
 
           if (!result.meta) {
             warnVerbose('book meta', metadata)
@@ -568,14 +584,64 @@ export async function extractBook(
       } catch {}
     })
 
-    // Only used for the 'blob' render method
+    // Only used for the 'blob' render method. Every image blob the page turns
+    // into an object URL lands here, but only the one that becomes the main
+    // image's `src` is ever consumed. The rest (pages rendered while walking to
+    // a target page, neighbours Kindle prefetches, other images) would
+    // otherwise pile up for the whole capture, so entries are aged out, see
+    // `evictStaleBlobs`.
     const capturedBlobs = new Map<
       string,
       {
         type: string
         base64: string
+        // How many blobs had been consumed when this one arrived.
+        consumedAtArrival: number
       }
     >()
+    let numBlobsConsumed = 0
+
+    // Eviction is by age rather than by position relative to the consumed
+    // blob. Blobs arrive in the order their bytes finish copying, not the order
+    // Kindle created them, and Kindle may render a prefetched neighbour before
+    // the page it is about to show, so "everything inserted before `src`" can
+    // include the very next page. A blob that has sat through several page
+    // captures without becoming `src`, though, belongs to a page that is
+    // behind us (or was never a page), and a revisit makes Kindle create a
+    // fresh object URL anyway because it revokes the old one after use.
+    const maxBlobAgeInConsumptions = 8
+    // Backstop for long stretches with no consumption at all, such as walking
+    // hundreds of pages to reach the start of the book. The oldest entries go
+    // first, so the newest ones (the prefetched pages we are about to show)
+    // survive.
+    const maxCapturedBlobs = 64
+
+    function evictStaleBlobs() {
+      for (const [url, blob] of capturedBlobs) {
+        if (
+          numBlobsConsumed - blob.consumedAtArrival >
+          maxBlobAgeInConsumptions
+        ) {
+          capturedBlobs.delete(url)
+        }
+      }
+
+      // Maps iterate in insertion order, so the first keys are the oldest.
+      for (const url of capturedBlobs.keys()) {
+        if (capturedBlobs.size <= maxCapturedBlobs) break
+        capturedBlobs.delete(url)
+      }
+    }
+
+    function takeCapturedBlob(url: string) {
+      const blob = capturedBlobs.get(url)
+      if (!blob) return
+
+      capturedBlobs.delete(url)
+      numBlobsConsumed++
+      evictStaleBlobs()
+      return blob
+    }
 
     if (renderMethod === 'blob') {
       await page.exposeFunction('nodeLog', (...args: any[]) => {
@@ -584,9 +650,16 @@ export async function extractBook(
         }
       })
 
-      await page.exposeBinding('captureBlob', (_source, url, payload) => {
-        capturedBlobs.set(url, payload)
-      })
+      await page.exposeBinding(
+        'captureBlob',
+        (_source, url: string, payload: { type: string; base64: string }) => {
+          capturedBlobs.set(url, {
+            ...payload,
+            consumedAtArrival: numBlobsConsumed
+          })
+          evictStaleBlobs()
+        }
+      )
     }
 
     // Try going directly to the book reader page if we're already authenticated.
@@ -1222,10 +1295,9 @@ export async function extractBook(
           (signal) => [
             (async () => {
               while (!signal.aborted) {
-                const blob = capturedBlobs.get(src)
+                const blob = takeCapturedBlob(src)
 
                 if (blob) {
-                  capturedBlobs.delete(src)
                   return blob
                 }
 
