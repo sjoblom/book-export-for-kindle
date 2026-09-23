@@ -6,11 +6,11 @@
   "author": "Emil Sjöblom",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/sjoblom/kindle-export.git"
+    "url": "git+https://github.com/sjoblom/book-export-for-kindle.git"
   },
-  "homepage": "https://github.com/sjoblom/kindle-export#readme",
+  "homepage": "https://github.com/sjoblom/book-export-for-kindle#readme",
   "bugs": {
-    "url": "https://github.com/sjoblom/kindle-export/issues"
+    "url": "https://github.com/sjoblom/book-export-for-kindle/issues"
   },
   "contributors": [
     "Travis Fischer <travis@transitivebullsh.it> (original kindle-ai-export)"

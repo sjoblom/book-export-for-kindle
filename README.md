@@ -224,8 +224,8 @@ bundled Chromium. On macOS, the Xcode command line tools
 succeeds and transcription falls back to OpenAI.
 
 ```bash
-git clone https://github.com/sjoblom/kindle-export
-cd book-export
+git clone https://github.com/sjoblom/book-export-for-kindle
+cd book-export-for-kindle
 pnpm install
 pnpm build
 npm link          # optional: puts `book-export` on your PATH
