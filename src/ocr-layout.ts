@@ -66,11 +66,18 @@ function measurePage(lines: OcrLine[]): PageMetrics {
     if (step > 0) pitches.push(step)
   }
 
+  // Leading is never as much as the font size again, so a step of more than
+  // two line heights can only be a paragraph gap (or a heading's space). Those
+  // are left out before taking the median: on a page of three lines with one
+  // gap, the gap is half the steps and would otherwise drag the typical pitch
+  // up far enough to hide itself. The median of what is left, rather than a
+  // low quantile, is still the right estimate, because Vision's box tops
+  // jitter and a low quantile picks the tightest pair and splits full pages.
+  const bodySteps = pitches.filter((step) => step <= lineHeight * 2)
+
   return {
     lineHeight,
-    // A page of prose is mostly body lines, so the median pitch is the normal
-    // leading even when a few paragraph gaps are mixed in.
-    pitch: pitches.length ? quantile(pitches, 0.5) : lineHeight * 1.2,
+    pitch: bodySteps.length ? quantile(bodySteps, 0.5) : lineHeight * 1.2,
     // Everything that is not flush left — indented first lines, centred
     // headings — sits to the right of the column edge, so a low quantile finds
     // the edge itself. The median would do on a page of prose but drifts on a
@@ -134,14 +141,22 @@ function hasExtraLeading(
 }
 
 /**
+ * Text that ends a sentence: terminal punctuation, optionally followed by the
+ * quotation marks or brackets that close around it.
+ */
+const SENTENCE_END_REGEX = /[.!?…]["'”’)\]]*$/u
+
+/**
  * Whether `line` is a first line indented under the previous paragraph's last
  * line, which is how a book that does not leave a blank line marks a boundary.
  *
  * An indent is about an em wide, which is why the threshold is scaled to the
- * line height rather than to the page. The previous line also has to have
- * stopped short of the right margin, as the last line of a paragraph does:
- * that costs nothing in a real book and rules out prose that simply runs on
- * with a wide glyph at the start of a line.
+ * line height rather than to the page. The previous line also has to look
+ * like the end of a paragraph, which rules out prose that simply runs on with
+ * a wide glyph at the start of a line. Usually that means it stopped short of
+ * the right margin, but in justified text a paragraph's last line can happen
+ * to fill the measure, so ending on a full stop counts too. Either alone is
+ * cheap evidence; together with the indent they are rarely wrong.
  */
 function isIndentedStart(
   prev: OcrLine,
@@ -152,7 +167,97 @@ function isIndentedStart(
   const prevStopsShort =
     prev.left + prev.width < metrics.columnRight - metrics.lineHeight * 0.3
 
-  return indented && prevStopsShort
+  const prevEndsSentence = SENTENCE_END_REGEX.test(prev.text.trim())
+
+  return indented && (prevStopsShort || prevEndsSentence)
+}
+
+/**
+ * A drop cap as Vision reads it: one capital letter, perhaps behind an opening
+ * quotation mark, on a line of its own.
+ */
+const DROP_CAP_TEXT_REGEX = /^["'“‘]?\p{Lu}$/u
+
+/**
+ * Whether `line` is one of those set beside a drop cap: it starts before the
+ * capital's foot (with half a line of grace, since the last such line's box
+ * can reach just below it) and to the right of the capital's middle.
+ */
+function isBesideDropCap(
+  line: OcrLine,
+  cap: OcrLine,
+  lineHeight: number
+): boolean {
+  return (
+    line.top < cap.top + cap.height - lineHeight * 0.5 &&
+    line.left > cap.left + cap.width * 0.5
+  )
+}
+
+/**
+ * Fold decorative drop caps back into the words they begin.
+ *
+ * A chapter that opens with a large initial capital comes back from Vision as
+ * a line holding just that letter (`F`) followed by the rest of the word on
+ * the first real line (`antasies give us…`). Left alone that is a one-letter
+ * paragraph and a broken word. The capital is also several lines tall and the
+ * lines beside it are pushed right to wrap around it, so it would skew the
+ * page's line height and make those wrapped lines look indented.
+ *
+ * A drop cap is recognised by all of: a single capital, a box more than one
+ * and a half lines tall, and a next line that starts in lowercase beside it —
+ * the tail of the same word. That leaves alone a real one-letter line such as
+ * a section label, which is neither tall nor followed by half a word. The
+ * letter is prefixed to that line with no space. The lines wrapped beside the
+ * capital are moved out together until the leftmost of them meets the
+ * capital's left edge, which is where the column really starts; moving them
+ * as a block rather than each to the edge keeps an indent among them, since a
+ * short opening paragraph can end and the next begin before the capital does.
+ */
+function absorbDropCaps(lines: OcrLine[]): OcrLine[] {
+  const lineHeight = quantile(
+    lines.map((line) => line.height),
+    0.5
+  )
+  const result: OcrLine[] = []
+
+  for (let i = 0; i < lines.length; i++) {
+    const cap = lines[i]!
+    const next = lines[i + 1]
+
+    const isDropCap =
+      next !== undefined &&
+      DROP_CAP_TEXT_REGEX.test(cap.text.trim()) &&
+      cap.height > lineHeight * 1.6 &&
+      /^\p{Ll}/u.test(next.text.trim()) &&
+      isBesideDropCap(next, cap, lineHeight)
+    if (!isDropCap) {
+      result.push(cap)
+      continue
+    }
+
+    let end = i + 2
+    while (
+      end < lines.length &&
+      isBesideDropCap(lines[end]!, cap, lineHeight)
+    ) {
+      end++
+    }
+    const wrapped = lines.slice(i + 1, end)
+    const shift = Math.min(...wrapped.map((line) => line.left)) - cap.left
+
+    for (const [j, line] of wrapped.entries()) {
+      result.push({
+        ...line,
+        text: j === 0 ? cap.text.trim() + line.text.trim() : line.text,
+        left: line.left - shift,
+        width: line.width + shift
+      })
+    }
+    i = end - 1
+  }
+
+  return result
 }
 
 /**
@@ -185,7 +290,9 @@ export function joinWrappedLines(prev: string, next: string): string {
  * between them go.
  */
 export function reconstructParagraphs(lines: OcrLine[]): string {
-  const usable = lines.filter((line) => line.text.trim().length > 0)
+  const usable = absorbDropCaps(
+    lines.filter((line) => line.text.trim().length > 0)
+  )
   if (usable.length === 0) return ''
 
   const metrics = measurePage(usable)

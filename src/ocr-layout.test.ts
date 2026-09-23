@@ -114,6 +114,168 @@ describe('reconstructParagraphs', () => {
     )
   })
 
+  it('splits on an indent even when the line above fills the measure', () => {
+    // Justified text can set a paragraph's last line full width. The full
+    // stop is what says it ended.
+    const text = reconstructParagraphs(
+      page([
+        ['The first paragraph runs on'],
+        ['and its last line happens to fill it.'],
+        ['The next one is indented', { left: COLUMN_LEFT + 60 }],
+        ['and follows on directly.', { right: 420 }]
+      ])
+    )
+
+    expect(text).toBe(
+      'The first paragraph runs on and its last line happens to fill it.\n' +
+        'The next one is indented and follows on directly.'
+    )
+  })
+
+  it('finds a paragraph gap on a page of only three lines', () => {
+    // With two steps, one of them the gap, the median step is halfway to the
+    // gap and would hide it. Steps over twice the line height are not leading.
+    const lines: OcrLine[] = [
+      { text: 'He never did write back to me,', top: 100, height: 22 },
+      { text: 'and I stopped waiting.', top: 134, height: 22 },
+      { text: 'Argentine • NA • Less than £15,000', top: 194, height: 22 }
+    ].map((line) => ({ ...line, left: 18, width: 600 }))
+
+    expect(reconstructParagraphs(lines)).toBe(
+      'He never did write back to me, and I stopped waiting.\n' +
+        'Argentine • NA • Less than £15,000'
+    )
+  })
+
+  it('does not split a full page whose line tops jitter', () => {
+    // Vision's boxes hug the glyphs, so the top-to-top steps of plain prose
+    // wander by several pixels either way. These steps, heights and left edges
+    // are one real page of a single paragraph. Estimating the pitch from the
+    // tightest steps (a low quantile rather than the median) splits it at
+    // every 40px step.
+    const steps = [34, 36, 28, 38, 34, 26, 40, 28, 28, 36, 40, 28, 36, 34, 28]
+    const heights = [30, 26, 26, 26, 26, 24, 30, 24, 26, 33, 26, 24, 21, 24, 24]
+    const lefts = [17, 17, 18, 17, 18, 18, 17, 18, 17, 17, 17, 18, 16, 18, 16]
+    let top = 36
+    const lines: OcrLine[] = heights.map((height, i) => {
+      const line = {
+        text: `line ${i} of one long paragraph`,
+        left: lefts[i]!,
+        top,
+        width: 1006 - lefts[i]!,
+        height
+      }
+      top += steps[i] ?? 0
+      return line
+    })
+    lines.at(-1)!.width = 300
+
+    expect(reconstructParagraphs(lines).split('\n')).toHaveLength(1)
+  })
+
+  it('folds a drop cap back into the word it begins', () => {
+    // The capital spans three lines, and the lines beside it wrap around it.
+    const text = reconstructParagraphs([
+      { text: 'F', left: 20, top: 38, width: 66, height: 80 },
+      {
+        text: 'antasies give us a way out.',
+        left: 96,
+        top: 34,
+        width: 910,
+        height: 28
+      },
+      {
+        text: 'Our moods change. So can',
+        left: 98,
+        top: 68,
+        width: 908,
+        height: 24
+      },
+      {
+        text: 'they, from one day to the',
+        left: 98,
+        top: 102,
+        width: 908,
+        height: 26
+      },
+      {
+        text: 'next, and that is fine.',
+        left: 18,
+        top: 134,
+        width: 400,
+        height: 26
+      },
+      {
+        text: 'The contributors here write',
+        left: 50,
+        top: 166,
+        width: 956,
+        height: 26
+      },
+      { text: 'with abandon.', left: 18, top: 200, width: 300, height: 22 }
+    ])
+
+    expect(text).toBe(
+      'Fantasies give us a way out. Our moods change. So can they, from one day to the next, and that is fine.\n' +
+        'The contributors here write with abandon.'
+    )
+  })
+
+  it('keeps an indent among the lines beside a drop cap', () => {
+    // A two-line opening paragraph ends before the capital does, so the next
+    // paragraph's indent sits beside it too.
+    const text = reconstructParagraphs([
+      { text: 'S', left: 20, top: 38, width: 60, height: 80 },
+      {
+        text: 'ex is subjective. While we',
+        left: 86,
+        top: 36,
+        width: 920,
+        height: 24
+      },
+      {
+        text: 'label it, kink varies.',
+        left: 78,
+        top: 68,
+        width: 456,
+        height: 24
+      },
+      {
+        text: 'Tentacles, door handles',
+        left: 118,
+        top: 100,
+        width: 888,
+        height: 24
+      },
+      {
+        text: 'and more besides are here',
+        left: 18,
+        top: 132,
+        width: 986,
+        height: 26
+      },
+      { text: 'in these letters.', left: 18, top: 166, width: 300, height: 26 }
+    ])
+
+    expect(text).toBe(
+      'Sex is subjective. While we label it, kink varies.\n' +
+        'Tentacles, door handles and more besides are here in these letters.'
+    )
+  })
+
+  it('leaves a single letter of ordinary size alone', () => {
+    // A single-letter word at the end of a line is not a drop cap: it is one
+    // line tall, so it keeps its space.
+    const text = reconstructParagraphs(
+      page([
+        ['A', { right: COLUMN_LEFT + 20 }],
+        ['lowercase start to the next line', { right: 500 }]
+      ])
+    )
+
+    expect(text).toBe('A lowercase start to the next line')
+  })
+
   it('keeps a centred heading as its own paragraph', () => {
     const text = reconstructParagraphs(
       page([
