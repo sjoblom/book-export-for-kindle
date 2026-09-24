@@ -8,6 +8,20 @@ It is for books you have bought, for your own reading. It works against
 Amazon's terms of service, and exports must not be shared — read
 [Scope](#scope) before using it.
 
+## Download (Mac)
+
+**[Download Book Export for Kindle](https://github.com/sjoblom/book-export-for-kindle/releases/latest/download/Book-Export-for-Kindle.zip)** — for macOS 13 or later.
+
+1. Open the downloaded zip and drag **Book Export for Kindle** into
+   **Applications**.
+2. Double-click it. The first time, macOS says it can't check the app — click
+   **Done**, then go to **System Settings → Privacy & Security**, scroll down
+   and click **Open Anyway**. (On macOS 13–14: right-click the app → **Open**
+   → **Open**.)
+
+That's it — from then on it opens like any other app (after an update, macOS
+asks once more). Sign in to Amazon in its window and click a book to export it.
+
 - **On a Mac: `Book Export for Kindle.app`.** A native app of a few megabytes — click
   a book in your library and it becomes a Markdown file (or a PDF). It
   carries its own command-line tool, `book-export`, for the terminal.
@@ -22,25 +36,7 @@ nothing else installed: no Node, no Chrome, no API key. It runs on macOS 13 or
 later (Apple silicon and Intel), and it is made so that someone who never
 touches a terminal can use it alone.
 
-**[Download Book Export for Kindle](https://github.com/sjoblom/book-export-for-kindle/releases/latest/download/Book-Export-for-Kindle.zip)**
-(latest release; older ones are on the
-[releases page](https://github.com/sjoblom/book-export-for-kindle/releases)).
-
-1. Open the downloaded zip (Safari usually does this for you) to get
-   `Book Export for Kindle.app`.
-2. Move it into **Applications**. If an older `Kindle Export.app` is there,
-   delete it — the new app keeps its Amazon sign-in and its books.
-3. Open it once the long way, because it is signed ad hoc, not notarised,
-   so macOS refuses the first launch:
-   - **macOS 15 or later:** double-click it, click **Done** on the warning,
-     then open **System Settings → Privacy & Security**, scroll down and
-     click **Open Anyway** (and confirm with your password or Touch ID).
-   - **macOS 13–14:** right-click it → **Open** → **Open**.
-
-After that it opens with a normal double-click. Every new build is a new
-unsigned app, so step 3 comes back after each update.
-
-To build it yourself instead (it lands in `dist-app/`; AirDrop it to another
+To build it yourself (it lands in `dist-app/`; AirDrop it to another
 Mac, or zip it with `ditto -c -k --keepParent` to send it any other way —
 an `.app` is a folder):
 
