@@ -1,0 +1,59 @@
+name: Release
+
+# Pushing a version tag (`git tag v0.3.0 && git push origin v0.3.0`) builds the
+# universal app and attaches it to a GitHub release, so the README can link
+# straight to .../releases/latest/download/Book-Export-for-Kindle.zip.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  app:
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+          PATCHRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+
+      # The tag names the version the app reports; a mismatch would ship an
+      # app that calls itself something else.
+      - name: Check the tag matches package.json
+        run: |
+          VERSION="$(node -p 'require("./package.json").version')"
+          test "$GITHUB_REF_NAME" = "v$VERSION" || {
+            echo "tag $GITHUB_REF_NAME but package.json says $VERSION" >&2
+            exit 1
+          }
+
+      # Universal, so one download works on Apple silicon and Intel alike.
+      - run: ARCH=universal pnpm package
+
+      # ditto keeps the bundle's symlinks, permissions and signature intact,
+      # which a plain zip does not. The asset name has no spaces so its URL
+      # stays stable across releases.
+      - name: Zip the app
+        run: |
+          cd dist-app
+          ditto -c -k --keepParent "Book Export for Kindle.app" ../Book-Export-for-Kindle.zip
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" Book-Export-for-Kindle.zip \
+            --title "Book Export for Kindle $GITHUB_REF_NAME" \
+            --generate-notes

@@ -17,25 +17,17 @@ Amazon's terms of service, and exports must not be shared — read
 
 ## On a Mac: Book Export for Kindle.app
 
-`pnpm package` builds `Book Export for Kindle.app` — a native Mac app of a few
-megabytes that needs nothing else installed: no Node, no Chrome, no API key.
-It runs on macOS 13 or later, and it is made so that someone who never
+`Book Export for Kindle.app` is a native Mac app of a few megabytes that needs
+nothing else installed: no Node, no Chrome, no API key. It runs on macOS 13 or
+later (Apple silicon and Intel), and it is made so that someone who never
 touches a terminal can use it alone.
 
-```bash
-pnpm package                  # this Mac's architecture
-ARCH=universal pnpm package   # Apple silicon and Intel in one app (needs Xcode)
-```
+**[Download Book Export for Kindle](https://github.com/sjoblom/book-export-for-kindle/releases/latest/download/Book-Export-for-Kindle.zip)**
+(latest release; older ones are on the
+[releases page](https://github.com/sjoblom/book-export-for-kindle/releases)).
 
-Building it needs this repo's dev setup (Node and pnpm, plus Xcode or its
-command line tools); the app it produces needs none of it. It lands in
-`dist-app/`.
-
-To put it on another Mac:
-
-1. AirDrop `Book Export for Kindle.app` to that Mac (or copy it over any
-   other way that keeps a folder intact — an `.app` is a folder; zip it
-   first with `ditto -c -k --keepParent` for email or cloud storage).
+1. Open the downloaded zip (Safari usually does this for you) to get
+   `Book Export for Kindle.app`.
 2. Move it into **Applications**. If an older `Kindle Export.app` is there,
    delete it — the new app keeps its Amazon sign-in and its books.
 3. Open it once the long way, because it is signed ad hoc, not notarised,
@@ -47,6 +39,20 @@ To put it on another Mac:
 
 After that it opens with a normal double-click. Every new build is a new
 unsigned app, so step 3 comes back after each update.
+
+To build it yourself instead (it lands in `dist-app/`; AirDrop it to another
+Mac, or zip it with `ditto -c -k --keepParent` to send it any other way —
+an `.app` is a folder):
+
+```bash
+pnpm package                  # this Mac's architecture
+ARCH=universal pnpm package   # Apple silicon and Intel in one app (needs Xcode)
+```
+
+Building needs this repo's dev setup (Node and pnpm, plus Xcode or its
+command line tools); the app it produces needs none of it. Releases are cut by
+pushing a version tag matching `package.json` (`git tag v0.3.0 && git push
+origin v0.3.0`): the Release workflow builds the universal app and attaches it.
 
 It shows your Kindle library in a single window: click a book to export it;
 clicking more lines them up. Each book's card says where it is — capturing
